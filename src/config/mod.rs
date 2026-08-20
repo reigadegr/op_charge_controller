@@ -7,7 +7,12 @@ use format_profile::format_toml;
 use log::{error, info};
 use serde::Deserialize;
 
-const DEFAULT_PROFILE: &str = "/data/adb/modules/thread_opt/thread_opt.toml";
+const DEFAULT_PROFILE: &str = "./op_charge.toml";
+
+#[derive(Deserialize)]
+pub struct Config {
+    pub max_current: i32,
+}
 
 pub struct AtomicConfig {
     inner: ArcSwap<Config>,
@@ -66,9 +71,4 @@ pub fn profile_path() -> String {
         Some(profile) => profile,
         None => DEFAULT_PROFILE.to_string(),
     }
-}
-
-#[derive(Deserialize)]
-pub struct Config {
-    pub max_current: i32,
 }
