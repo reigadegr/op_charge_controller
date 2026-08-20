@@ -1,0 +1,66 @@
+pub mod looper;
+use std::{sync::Arc, thread, time::Duration};
+
+use anyhow::Result;
+use inotify::{Inotify, WatchMask};
+use log::{error, info};
+use looper::Looper;
+
+use crate::config::{AtomicConfig, profile_path};
+
+pub struct Scheduler {
+    looper: Looper,
+    atomic_config: Arc<AtomicConfig>,
+}
+
+impl Scheduler {
+    pub fn new() -> Result<Self> {
+        let atomic_config = Arc::new(AtomicConfig::init()?);
+        let looper = Looper::new();
+
+        Ok(Self {
+            looper,
+            atomic_config,
+        })
+    }
+
+    fn start_config_watcher(&self) {
+        let config = Arc::clone(&self.atomic_config);
+
+        std::thread::spawn(move || {
+            let config_path = profile_path();
+            let mut inotify = match Inotify::init() {
+                Ok(i) => i,
+                Err(e) => {
+                    error!("Failed to initialize inotify for config watcher: {e}");
+                    return;
+                }
+            };
+
+            if let Err(e) = inotify.watches().add(config_path, WatchMask::CLOSE_WRITE) {
+                error!("Failed to add watch for config file: {e}");
+                return;
+            }
+
+            info!("Config watcher started");
+
+            loop {
+                match inotify.read_events_blocking(&mut [0; 1024]) {
+                    Ok(_) => {
+                        thread::sleep(Duration::from_millis(50));
+                        config.reload();
+                    }
+                    Err(e) => {
+                        error!("Failed to read inotify events: {e}");
+                        thread::sleep(Duration::from_millis(1000));
+                    }
+                }
+            }
+        });
+    }
+
+    pub fn start_run(&mut self) {
+        self.start_config_watcher();
+        self.looper.enter_loop(&self.atomic_config);
+    }
+}
