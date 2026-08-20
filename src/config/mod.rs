@@ -69,4 +69,6 @@ pub fn profile_path() -> String {
 }
 
 #[derive(Deserialize)]
-pub struct Config {}
+pub struct Config {
+    pub max_current: i32,
+}
