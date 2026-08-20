@@ -1,5 +1,6 @@
 use taplo::formatter;
 
+#[must_use]
 pub fn format_toml(input: &str) -> String {
     let options = formatter::Options {
         indent_string: "    ".to_string(),

@@ -1,4 +1,5 @@
 pub mod format_profile;
+
 use std::{env, fs, sync::Arc};
 
 use anyhow::Result;
@@ -66,6 +67,7 @@ impl AtomicConfig {
     }
 }
 
+#[must_use]
 pub fn profile_path() -> String {
     match env::args().nth(1) {
         Some(profile) => profile,

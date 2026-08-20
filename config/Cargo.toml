@@ -1,0 +1,15 @@
+[package]
+name = "config"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+arc-swap.workspace = true
+log.workspace = true
+serde.workspace = true
+taplo.workspace = true
+toml.workspace = true
+
+[lints]
+workspace = true

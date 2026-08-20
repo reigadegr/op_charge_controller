@@ -1,0 +1,12 @@
+[package]
+name = "app"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow.workspace = true
+mimalloc.workspace = true
+scheduler = { path = "../scheduler" }
+
+[lints]
+workspace = true

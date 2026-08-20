@@ -1,12 +1,12 @@
 pub mod looper;
+
 use std::{sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
+use config::{AtomicConfig, profile_path};
 use inotify::{Inotify, WatchMask};
 use log::{error, info};
 use looper::Looper;
-
-use crate::config::{AtomicConfig, profile_path};
 
 pub struct Scheduler {
     looper: Looper,
@@ -52,7 +52,7 @@ impl Scheduler {
                     }
                     Err(e) => {
                         error!("Failed to read inotify events: {e}");
-                        thread::sleep(Duration::from_millis(1000));
+                        thread::sleep(Duration::from_secs(1));
                     }
                 }
             }

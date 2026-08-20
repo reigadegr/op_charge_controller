@@ -1,11 +1,12 @@
 use std::{sync::Arc, thread, time::Duration};
 
-use crate::config::AtomicConfig;
+use config::AtomicConfig;
 
 pub struct Looper;
 
 impl Looper {
-    pub fn new() -> Self {
+    #[must_use]
+    pub const fn new() -> Self {
         Self
     }
 
@@ -14,5 +15,11 @@ impl Looper {
             let _config = config_manager.get();
             thread::sleep(Duration::from_secs(1));
         }
+    }
+}
+
+impl Default for Looper {
+    fn default() -> Self {
+        Self::new()
     }
 }
