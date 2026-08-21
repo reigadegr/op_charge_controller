@@ -8,7 +8,6 @@ anyhow.workspace = true
 config = { path = "../config" }
 inotify.workspace = true
 log.workspace = true
-netlink-sys.workspace = true
 
 [lints]
 workspace = true
