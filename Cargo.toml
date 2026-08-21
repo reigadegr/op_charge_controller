@@ -33,3 +33,20 @@ missing_panics_doc = "allow"
 cast_precision_loss = "allow"
 struct_excessive_bools = "allow"
 option_if_let_else = "allow"
+
+[profile.dev]
+debug = true
+debug-assertions = true
+panic = "abort"
+incremental = true
+
+[profile.release]
+overflow-checks = false
+codegen-units = 1
+lto = "thin"
+opt-level = 2
+strip = true
+debug = 0
+debug-assertions = false
+incremental = false
+panic = "abort"
