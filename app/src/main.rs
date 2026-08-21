@@ -4,6 +4,5 @@ static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 use scheduler::Scheduler;
 
 fn main() -> anyhow::Result<()> {
-    Scheduler::new()?.start_run();
-    Ok(())
+    Scheduler::new()?.start_run()
 }

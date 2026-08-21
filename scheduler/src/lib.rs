@@ -59,8 +59,8 @@ impl Scheduler {
         });
     }
 
-    pub fn start_run(&mut self) {
+    pub fn start_run(&mut self) -> Result<()> {
         self.start_config_watcher();
-        self.looper.enter_loop(&self.atomic_config);
+        self.looper.enter_loop(&self.atomic_config)
     }
 }
