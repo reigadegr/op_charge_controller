@@ -1,5 +1,6 @@
-use std::{fs, io, sync::Arc, thread, time::Duration};
+use std::{fs, sync::Arc, thread, time::Duration};
 
+use anyhow::Result;
 use config::AtomicConfig;
 
 const BATTERY_STATUS_PATH: &str =
@@ -26,8 +27,9 @@ impl Looper {
         }
     }
 
-    fn read_battery_status() -> io::Result<String> {
-        fs::read_to_string(BATTERY_STATUS_PATH).map(|status| status.trim().to_owned())
+    fn read_battery_status() -> Result<String> {
+        let status = fs::read_to_string(BATTERY_STATUS_PATH)?;
+        Ok(status.trim().to_owned())
     }
 
     fn enter_charging_loop() {
