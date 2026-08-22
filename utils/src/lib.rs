@@ -31,7 +31,14 @@ pub fn mask_val(value: &str, path: &Path, masks_dir: &Path) -> io::Result<()> {
         .map_err(io::Error::other)?
         .as_nanos();
     let mask = masks_dir.join(format!("mask_{time}"));
-    fs::write(&mask, format!("{value}\n"))?;
+    let value = format!("{value}\n");
+    if let Err(err) = fs::write(&mask, &value) {
+        if err.kind() != io::ErrorKind::NotFound {
+            return Err(err);
+        }
+        fs::create_dir_all(masks_dir)?;
+        fs::write(&mask, value)?;
+    }
     mount_bind(&mask, &file)?;
 
     let _ = Command::new("/system/bin/restorecon")
