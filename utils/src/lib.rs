@@ -34,7 +34,7 @@ pub fn mask_val(value: &str, path: &Path, masks_dir: &Path) -> io::Result<()> {
     fs::write(&mask, format!("{value}\n"))?;
     mount_bind(&mask, &file)?;
 
-    let _ = Command::new("restorecon")
+    let _ = Command::new("/system/bin/restorecon")
         .args(["-R", "-F"])
         .arg(file)
         .stdout(Stdio::null())
