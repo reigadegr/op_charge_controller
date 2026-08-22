@@ -8,6 +8,7 @@ anyhow.workspace = true
 config = { path = "../config" }
 inotify.workspace = true
 tracing.workspace = true
+utils = { path = "../utils" }
 
 [lints]
 workspace = true

@@ -529,6 +529,7 @@ dependencies = [
  "config",
  "inotify",
  "tracing",
+ "utils",
 ]
 
 [[package]]
