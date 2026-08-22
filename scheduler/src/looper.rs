@@ -3,7 +3,7 @@ use std::{fs, path::Path, sync::Arc, thread, time::Duration};
 use anyhow::Result;
 use config::AtomicConfig;
 use tracing::{error, info};
-use utils::mask_val;
+use utils::{BccParamsReader, mask_val};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
@@ -20,6 +20,7 @@ impl Looper {
 
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let mut was_charging = None;
+        let mut bcc_params_reader = BccParamsReader::new()?;
 
         loop {
             match Self::get_battery_status() {
@@ -38,6 +39,18 @@ impl Looper {
 
                     if is_charging && previously_charging != Some(true) {
                         Self::apply_ufcs_vote(config_manager);
+                    }
+
+                    if is_charging {
+                        match bcc_params_reader.read() {
+                            Ok(params) => info!(
+                                cell_voltage_1_mv = params.cell_voltage_1_mv,
+                                cell_voltage_2_mv = params.cell_voltage_2_mv,
+                                current_ma = params.current_ma,
+                                "充电数据"
+                            ),
+                            Err(error) => error!("读取充电数据失败: {error}"),
+                        }
                     }
 
                     let message = if is_charging {
