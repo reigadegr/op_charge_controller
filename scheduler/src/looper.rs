@@ -19,26 +19,25 @@ impl Looper {
         let mut was_charging = None;
 
         loop {
-            match Self::read_battery_status() {
-                Ok(status) => {
-                    let is_charging = status == "Charging";
-
-                    if let Some(previously_charging) = was_charging
+            match Self::get_battery_status() {
+                Ok(is_charging) => {
+                    if let Some(previously_charging) = was_charging.replace(is_charging)
                         && previously_charging != is_charging
                     {
-                        if is_charging {
-                            info!("进入充电");
+                        let message = if is_charging {
+                            "进入充电"
                         } else {
-                            info!("退出充电");
-                        }
+                            "退出充电"
+                        };
+                        info!("{message}");
                     }
 
-                    if is_charging {
-                        info!("充电中");
+                    let message = if is_charging {
+                        "充电中"
                     } else {
-                        info!("未充电");
-                    }
-                    was_charging = Some(is_charging);
+                        "未充电"
+                    };
+                    info!("{message}");
                 }
                 Err(error) => error!("读取电池状态失败: {error}"),
             }
@@ -47,9 +46,9 @@ impl Looper {
         }
     }
 
-    fn read_battery_status() -> Result<String> {
+    fn get_battery_status() -> Result<bool> {
         let status = fs::read_to_string(BATTERY_STATUS_PATH)?;
-        Ok(status.trim().to_owned())
+        Ok(status.trim() == "Charging")
     }
 }
 
