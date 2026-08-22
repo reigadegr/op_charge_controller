@@ -2,6 +2,7 @@ use std::{fs, sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
 use config::AtomicConfig;
+use log::{error, info};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
@@ -26,20 +27,20 @@ impl Looper {
                         && previously_charging != is_charging
                     {
                         if is_charging {
-                            println!("进入充电");
+                            info!("进入充电");
                         } else {
-                            println!("退出充电");
+                            info!("退出充电");
                         }
                     }
 
                     if is_charging {
-                        println!("充电中");
+                        info!("充电中");
                     } else {
-                        println!("未充电");
+                        info!("未充电");
                     }
                     was_charging = Some(is_charging);
                 }
-                Err(error) => eprintln!("读取电池状态失败: {error}"),
+                Err(error) => error!("读取电池状态失败: {error}"),
             }
 
             thread::sleep(Duration::from_secs(1));
