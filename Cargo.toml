@@ -5,9 +5,8 @@ resolver = "3"
 [workspace.dependencies]
 anyhow = "1.0.104"
 arc-swap = "1.9.2"
-env_logger = "0.11.11"
+chrono = "0.4.44"
 inotify = { version = "0.11.5", default-features = false }
-log = "0.4.33"
 mimalloc = { version = "0.1.52", features = ["override", "v2", "no_thp"] }
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 taplo = { version = "0.14.0", default-features = false }
@@ -15,6 +14,8 @@ toml = { version = "1.1.4", default-features = false, features = [
   "parse",
   "serde",
 ] }
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
 
 [workspace.lints.clippy]
 all = { level = "warn", priority = -1 }

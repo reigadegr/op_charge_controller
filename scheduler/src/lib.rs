@@ -5,8 +5,8 @@ use std::{sync::Arc, thread, time::Duration};
 use anyhow::Result;
 use config::{AtomicConfig, profile_path};
 use inotify::{Inotify, WatchMask};
-use log::{error, info};
 use looper::Looper;
+use tracing::{error, info};
 
 pub struct Scheduler {
     looper: Looper,

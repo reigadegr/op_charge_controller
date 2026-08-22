@@ -5,8 +5,8 @@ use std::{env, fs, sync::Arc};
 use anyhow::Result;
 use arc_swap::{ArcSwap, Guard};
 use format_profile::format_toml;
-use log::{error, info};
 use serde::Deserialize;
+use tracing::{error, info};
 
 const DEFAULT_PROFILE: &str = "./op_charge.toml";
 

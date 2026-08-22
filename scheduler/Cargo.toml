@@ -7,7 +7,7 @@ edition = "2024"
 anyhow.workspace = true
 config = { path = "../config" }
 inotify.workspace = true
-log.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

@@ -2,7 +2,7 @@ use std::{fs, sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
 use config::AtomicConfig;
-use log::{error, info};
+use tracing::{error, info};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
