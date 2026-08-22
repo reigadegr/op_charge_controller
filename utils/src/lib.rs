@@ -1,7 +1,8 @@
 use std::{
-    fs, io,
-    path::Path,
+    env, fs, io,
+    path::{Path, PathBuf},
     process::{Command, Stdio},
+    sync::LazyLock,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -9,6 +10,15 @@ use rustix::{
     fs::{Gid, Mode, Uid, chmod, chown},
     mount::{UnmountFlags, mount_bind, unmount},
 };
+
+static MASKS_DIR: LazyLock<io::Result<PathBuf>> = LazyLock::new(|| masks_dir(&env::current_exe()?));
+
+fn masks_dir(executable: &Path) -> io::Result<PathBuf> {
+    executable
+        .parent()
+        .map(|directory| directory.join("masks"))
+        .ok_or_else(|| io::Error::other("无法获取当前 ELF 所在目录"))
+}
 
 pub fn lock_val(value: &str, path: &Path) -> io::Result<()> {
     let file = path.canonicalize()?;
@@ -22,7 +32,10 @@ pub fn lock_val(value: &str, path: &Path) -> io::Result<()> {
     Ok(())
 }
 
-pub fn mask_val(value: &str, path: &Path, masks_dir: &Path) -> io::Result<()> {
+pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
+    let masks_dir = MASKS_DIR
+        .as_ref()
+        .map_err(|error| io::Error::new(error.kind(), format!("获取 masks 目录失败: {error}")))?;
     let file = path.canonicalize()?;
     lock_val(value, &file)?;
 
