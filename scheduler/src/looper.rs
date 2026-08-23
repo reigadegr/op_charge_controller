@@ -85,25 +85,21 @@ impl Looper {
     fn apply_ufcs_vote(config_manager: &Arc<AtomicConfig>) {
         let ufcs_max_vote = config_manager.get().ufcs_max_vote.to_string();
 
-        if let Err(error) = mask_val(&ufcs_max_vote, Path::new(UFCS_FORCE_VAL_PATH)) {
-            error!("设置 UFCS 最大电流失败: {error}");
-        }
+        let _ = mask_val(&ufcs_max_vote, Path::new(UFCS_FORCE_VAL_PATH))
+            .inspect_err(|error| error!("设置 UFCS 最大电流失败: {error}"));
 
-        if let Err(error) = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)) {
-            error!("启用 UFCS 强制投票失败: {error}");
-        }
+        let _ = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH))
+            .inspect_err(|error| error!("启用 UFCS 强制投票失败: {error}"));
     }
 
     fn cut_off_ufcs() {
-        if let Err(error) = mask_val("0", Path::new(UFCS_FORCE_VAL_PATH)) {
-            error!("截止 UFCS 充电失败: {error}");
-        } else {
-            warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
+        match mask_val("0", Path::new(UFCS_FORCE_VAL_PATH)) {
+            Ok(()) => warn!("电芯电压达到截止阈值，UFCS 电流已置 0"),
+            Err(error) => error!("截止 UFCS 充电失败: {error}"),
         }
 
-        if let Err(error) = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)) {
-            error!("启用 UFCS 强制投票失败: {error}");
-        }
+        let _ = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH))
+            .inspect_err(|error| error!("启用 UFCS 强制投票失败: {error}"));
     }
 }
 
