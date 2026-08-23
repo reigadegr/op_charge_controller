@@ -2,7 +2,7 @@ use std::{fs, path::Path, sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
 use config::AtomicConfig;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use utils::{BccParamsReader, mask_val};
 
 const BATTERY_STATUS_PATH: &str =
@@ -20,6 +20,7 @@ impl Looper {
 
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let mut was_charging = None;
+        let mut cut_off = false;
         let mut bcc_params_reader = BccParamsReader::new()?;
 
         loop {
@@ -38,17 +39,26 @@ impl Looper {
                     }
 
                     if is_charging && previously_charging != Some(true) {
+                        cut_off = false;
                         Self::apply_ufcs_vote(config_manager);
                     }
 
                     if is_charging {
                         match bcc_params_reader.read() {
-                            Ok(params) => info!(
-                                cell_voltage_1_mv = params.cell_voltage_1_mv,
-                                cell_voltage_2_mv = params.cell_voltage_2_mv,
-                                current_ma = params.current_ma,
-                                "充电数据"
-                            ),
+                            Ok(params) => {
+                                info!(
+                                    cell_voltage_1_mv = params.cell_voltage_1_mv,
+                                    cell_voltage_2_mv = params.cell_voltage_2_mv,
+                                    current_ma = params.current_ma,
+                                    "充电数据"
+                                );
+                                let charge_cutoff_mv =
+                                    f64::from(config_manager.get().charge_cutoff_mv);
+                                if !cut_off && params.cell_voltage_1_mv >= charge_cutoff_mv {
+                                    Self::cut_off_ufcs();
+                                    cut_off = true;
+                                }
+                            }
                             Err(error) => error!("读取充电数据失败: {error}"),
                         }
                     }
@@ -77,6 +87,18 @@ impl Looper {
 
         if let Err(error) = mask_val(&ufcs_max_vote, Path::new(UFCS_FORCE_VAL_PATH)) {
             error!("设置 UFCS 最大电流失败: {error}");
+        }
+
+        if let Err(error) = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)) {
+            error!("启用 UFCS 强制投票失败: {error}");
+        }
+    }
+
+    fn cut_off_ufcs() {
+        if let Err(error) = mask_val("0", Path::new(UFCS_FORCE_VAL_PATH)) {
+            error!("截止 UFCS 充电失败: {error}");
+        } else {
+            warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
         }
 
         if let Err(error) = mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)) {
