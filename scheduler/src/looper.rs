@@ -25,55 +25,76 @@ impl Looper {
 
         loop {
             match Self::get_battery_status() {
-                Ok(is_charging) => {
-                    let previously_charging = was_charging.replace(is_charging);
-                    if let Some(previously_charging) = previously_charging
-                        && previously_charging != is_charging
-                    {
-                        let message = if is_charging {
-                            "进入充电"
-                        } else {
-                            "退出充电"
-                        };
-                        info!("{message}");
-                    }
-
-                    if is_charging && previously_charging != Some(true) {
-                        cut_off = false;
-                        Self::apply_ufcs_vote(config_manager);
-                    }
-
-                    if is_charging {
-                        match bcc_params_reader.read() {
-                            Ok(params) => {
-                                info!(
-                                    cell_voltage_1_mv = params.cell_voltage_1_mv,
-                                    cell_voltage_2_mv = params.cell_voltage_2_mv,
-                                    current_ma = params.current_ma,
-                                    "充电数据"
-                                );
-                                let charge_cutoff_mv =
-                                    f64::from(config_manager.get().charge_cutoff_mv);
-                                if !cut_off && params.cell_voltage_1_mv >= charge_cutoff_mv {
-                                    Self::cut_off_ufcs();
-                                    cut_off = true;
-                                }
-                            }
-                            Err(error) => error!("读取充电数据失败: {error}"),
-                        }
-                    }
-
-                    let message = if is_charging {
-                        "充电中"
-                    } else {
-                        "未充电"
-                    };
-                    info!("{message}");
-                }
+                Ok(is_charging) => Self::handle_battery_status(
+                    config_manager,
+                    &mut bcc_params_reader,
+                    &mut was_charging,
+                    &mut cut_off,
+                    is_charging,
+                ),
                 Err(error) => error!("读取电池状态失败: {error}"),
             }
 
             thread::sleep(Duration::from_secs(1));
+        }
+    }
+
+    fn handle_battery_status(
+        config_manager: &Arc<AtomicConfig>,
+        bcc_params_reader: &mut BccParamsReader,
+        was_charging: &mut Option<bool>,
+        cut_off: &mut bool,
+        is_charging: bool,
+    ) {
+        let previously_charging = was_charging.replace(is_charging);
+        if let Some(previously_charging) = previously_charging
+            && previously_charging != is_charging
+        {
+            let message = if is_charging {
+                "进入充电"
+            } else {
+                "退出充电"
+            };
+            info!("{message}");
+        }
+
+        if is_charging && previously_charging != Some(true) {
+            *cut_off = false;
+            Self::apply_ufcs_vote(config_manager);
+        }
+
+        if is_charging {
+            Self::handle_charge_data(config_manager, bcc_params_reader, cut_off);
+        }
+
+        let message = if is_charging {
+            "充电中"
+        } else {
+            "未充电"
+        };
+        info!("{message}");
+    }
+
+    fn handle_charge_data(
+        config_manager: &Arc<AtomicConfig>,
+        bcc_params_reader: &mut BccParamsReader,
+        cut_off: &mut bool,
+    ) {
+        match bcc_params_reader.read() {
+            Ok(params) => {
+                info!(
+                    cell_voltage_1_mv = params.cell_voltage_1_mv,
+                    cell_voltage_2_mv = params.cell_voltage_2_mv,
+                    current_ma = params.current_ma,
+                    "充电数据"
+                );
+                let charge_cutoff_mv = f64::from(config_manager.get().charge_cutoff_mv);
+                if !*cut_off && params.cell_voltage_1_mv >= charge_cutoff_mv {
+                    Self::cut_off_ufcs();
+                    *cut_off = true;
+                }
+            }
+            Err(error) => error!("读取充电数据失败: {error}"),
         }
     }
 
