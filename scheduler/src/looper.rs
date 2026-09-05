@@ -9,12 +9,13 @@ const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
-const UFCS_INITIAL_VOTE_MA: i32 = 1500;
 
 pub struct Looper {
     was_charging: Option<bool>,
     current_vote: Option<i32>,
+    locked_step_ma: Option<u32>,
     cut_off: bool,
+    constant_current: bool,
 }
 
 impl Looper {
@@ -23,7 +24,9 @@ impl Looper {
         Self {
             was_charging: None,
             current_vote: None,
+            locked_step_ma: None,
             cut_off: false,
+            constant_current: false,
         }
     }
 
@@ -67,6 +70,8 @@ impl Looper {
         if is_charging && previously_charging != Some(true) {
             self.cut_off = false;
             self.current_vote = None;
+            self.locked_step_ma = None;
+            self.constant_current = false;
         }
 
         if is_charging {
@@ -89,14 +94,23 @@ impl Looper {
         read_params: impl FnOnce() -> io::Result<BccParams>,
         mut apply_vote: impl FnMut(i32) -> Result<()>,
     ) -> Result<()> {
-        let just_started = self.current_vote.is_none();
-        let current_vote = if let Some(vote) = self.current_vote {
-            vote
+        let ramp = self.current_vote.zip(self.locked_step_ma);
+        let just_started = ramp.is_none();
+        let (current_vote, step_ma) = if let Some(ramp) = ramp {
+            ramp
         } else {
-            let vote = UFCS_INITIAL_VOTE_MA.min(config.ufcs_max_vote);
+            // The step is locked for the whole session, so reloading the profile
+            // midway cannot change this session's ramp rate.
+            let step_ma = config.ufcs_step_ma;
+            let vote = match i32::try_from(step_ma) {
+                Ok(step) => step.min(config.ufcs_max_vote),
+                // A step wider than i32 always exceeds the cap.
+                Err(_) => config.ufcs_max_vote,
+            };
             apply_vote(vote)?;
             self.current_vote = Some(vote);
-            vote
+            self.locked_step_ma = Some(step_ma);
+            (vote, step_ma)
         };
 
         // After startup, each vote settles during the loop's sleep before sampling.
@@ -113,12 +127,20 @@ impl Looper {
 
         let next_vote = if self.cut_off {
             0
-        } else if just_started {
+        } else if just_started || self.constant_current {
             current_vote
         } else {
-            current_vote
-                .saturating_add_unsigned(config.ufcs_step_ma)
-                .min(config.ufcs_max_vote)
+            let stepped = current_vote.saturating_add_unsigned(step_ma);
+            if stepped > config.ufcs_max_vote {
+                self.constant_current = true;
+                info!(
+                    current_vote_ma = current_vote,
+                    "升流已达上限，进入恒流充电阶段"
+                );
+                current_vote
+            } else {
+                stepped
+            }
         };
         if next_vote != current_vote {
             apply_vote(next_vote)?;
@@ -169,7 +191,7 @@ mod tests {
         BccParams {
             cell_voltage_1_mv: voltage,
             cell_voltage_2_mv: 4390.0,
-            current_ma: -1500.0,
+            current_ma: -100.0,
         }
     }
 
@@ -188,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn ramps_one_step_per_sample_and_keeps_checking_at_the_cap() {
+    fn ramps_one_locked_step_per_sample_and_stops_below_the_cap() {
         #[derive(Debug, PartialEq)]
         enum Event {
             Vote(i32),
@@ -196,12 +218,12 @@ mod tests {
         }
 
         let config = Config {
-            ufcs_max_vote: 1750,
+            ufcs_max_vote: 350,
             ..config()
         };
         let mut looper = Looper::new();
         let events = RefCell::new(Vec::new());
-        for voltage in [4400.0, 4400.0, 4400.0, 4400.0, 4400.0, 4570.0, 4400.0] {
+        for voltage in [4400.0, 4400.0, 4400.0, 4400.0, 4570.0, 4400.0] {
             looper.handle_battery_status(
                 &config,
                 || {
@@ -219,14 +241,12 @@ mod tests {
         assert_eq!(
             events.into_inner(),
             [
-                Event::Vote(1500),
+                Event::Vote(100),
                 Event::Read,
                 Event::Read,
-                Event::Vote(1600),
+                Event::Vote(200),
                 Event::Read,
-                Event::Vote(1700),
-                Event::Read,
-                Event::Vote(1750),
+                Event::Vote(300),
                 Event::Read,
                 Event::Read,
                 Event::Vote(0),
@@ -236,7 +256,7 @@ mod tests {
     }
 
     #[test]
-    fn restarts_from_1500_after_a_new_charging_session() {
+    fn restarts_from_the_locked_step_after_a_new_charging_session() {
         let config = config();
         let mut looper = Looper::new();
         looper.handle_battery_status(
@@ -246,20 +266,21 @@ mod tests {
             false,
         );
 
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1500]);
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1600]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [200]);
         assert!(tick(&mut looper, &config, false, 4400.0).is_empty());
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1500]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
         assert_eq!(tick(&mut looper, &config, true, 4571.0), [0]);
         assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
         assert!(tick(&mut looper, &config, false, 4400.0).is_empty());
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1500]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
     }
 
     #[test]
     fn initial_vote_respects_a_lower_cap_and_checks_voltage_immediately() {
         let config = Config {
             ufcs_max_vote: 1000,
+            ufcs_step_ma: 5000,
             ..config()
         };
         let mut looper = Looper::new();
@@ -270,20 +291,32 @@ mod tests {
     }
 
     #[test]
-    fn uses_updated_step_cap_and_cutoff_on_each_tick() {
+    fn locks_the_step_for_the_session_but_uses_the_updated_cutoff() {
         let mut config = config();
         let mut looper = Looper::new();
 
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1500]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
         config.ufcs_step_ma = 250;
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1750]);
-        config.ufcs_max_vote = 1600;
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1600]);
-        config.ufcs_step_ma = u32::MAX;
-        config.ufcs_max_vote = 5000;
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [5000]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [200]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [300]);
         config.charge_cutoff_mv = 4400;
         assert_eq!(tick(&mut looper, &config, true, 4400.0), [0]);
+    }
+
+    #[test]
+    fn holds_the_constant_current_stage_until_the_session_ends() {
+        let config = Config {
+            ufcs_max_vote: 150,
+            ..config()
+        };
+        let mut looper = Looper::new();
+
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
+        for _ in 0..3 {
+            assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
+        }
+        assert!(tick(&mut looper, &config, false, 4400.0).is_empty());
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
     }
 
     #[test]
@@ -304,15 +337,15 @@ mod tests {
             );
         }
 
-        assert_eq!(votes, [1500]);
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1600]);
+        assert_eq!(votes, [100]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [200]);
     }
 
     #[test]
     fn retries_failed_initial_and_incremental_votes_without_skipping_steps() {
         let config = config();
         let mut looper = Looper::new();
-        for expected_vote in [1500, 1600, 1700] {
+        for expected_vote in [100, 200, 300] {
             let previous_vote = looper.current_vote;
             looper.handle_battery_status(
                 &config,
@@ -332,7 +365,7 @@ mod tests {
     fn retries_a_failed_cutoff_even_after_voltage_drops() {
         let config = config();
         let mut looper = Looper::new();
-        assert_eq!(tick(&mut looper, &config, true, 4400.0), [1500]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
 
         looper.handle_battery_status(
             &config,
@@ -344,7 +377,7 @@ mod tests {
             true,
         );
 
-        assert_eq!(looper.current_vote, Some(1500));
+        assert_eq!(looper.current_vote, Some(100));
         assert_eq!(tick(&mut looper, &config, true, 4400.0), [0]);
         assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
     }
