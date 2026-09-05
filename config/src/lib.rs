@@ -13,6 +13,7 @@ const DEFAULT_PROFILE: &str = "./op_charge.toml";
 #[derive(Deserialize)]
 pub struct Config {
     pub ufcs_max_vote: i32,
+    pub ufcs_step_ma: u32,
     pub charge_cutoff_mv: i32,
 }
 

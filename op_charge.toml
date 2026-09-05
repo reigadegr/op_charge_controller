@@ -1,2 +1,3 @@
 ufcs_max_vote = 5000
+ufcs_step_ma = 100
 charge_cutoff_mv = 4570
