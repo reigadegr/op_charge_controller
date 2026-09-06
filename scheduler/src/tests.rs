@@ -3,7 +3,8 @@ use super::*;
 fn config() -> Config {
     Config {
         ufcs_max_vote: 5000,
-        ufcs_step_ma: 100,
+        ufcs_ramp_step_ma: 100,
+        ufcs_taper_step_ma: 100,
         constant_voltage_mv: 4500,
         charge_cutoff_mv: 4570,
     }
@@ -77,6 +78,32 @@ fn failed_vote_is_retried_without_advancing_state() {
     assert_eq!(
         tick(&mut looper, &config, true, params(4400.0, 4390.0)),
         [100]
+    );
+}
+
+#[test]
+fn ramp_and_taper_use_their_own_steps() {
+    let config = Config {
+        ufcs_ramp_step_ma: 200,
+        ufcs_taper_step_ma: 50,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        [200]
+    );
+    assert_eq!(
+        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        [400]
+    );
+    assert_eq!(
+        tick(&mut looper, &config, true, params(4500.0, 4390.0)),
+        [350]
+    );
+    assert_eq!(
+        tick(&mut looper, &config, true, params(4500.0, 4390.0)),
+        [300]
     );
 }
 

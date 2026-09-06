@@ -13,7 +13,7 @@ const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active
 pub struct Looper {
     was_charging: Option<bool>,
     current_vote: Option<i32>,
-    locked_step_ma: Option<u32>,
+    locked_ramp_step_ma: Option<u32>,
     cut_off: bool,
     constant_current: bool,
     constant_voltage: bool,
@@ -25,7 +25,7 @@ impl Looper {
         Self {
             was_charging: None,
             current_vote: None,
-            locked_step_ma: None,
+            locked_ramp_step_ma: None,
             cut_off: false,
             constant_current: false,
             constant_voltage: false,
@@ -83,7 +83,7 @@ impl Looper {
         read_params: impl FnOnce() -> io::Result<BccParams>,
         mut apply_vote: impl FnMut(i32) -> Result<()>,
     ) -> Result<()> {
-        let (current, step, first_sample) = self.start_session(config, &mut apply_vote)?;
+        let (current, ramp_step, first_sample) = self.start_session(config, &mut apply_vote)?;
         let params = read_params().context("读取充电数据失败")?;
         info!(
             cell_voltage_1_mv = params.cell_voltage_1_mv,
@@ -93,9 +93,9 @@ impl Looper {
         );
         self.update_voltage_state(config, &params);
         let next = self.next_vote(
+            config,
             current,
-            step,
-            config.ufcs_max_vote,
+            ramp_step,
             first_sample,
             Self::over_constant_voltage(config, &params),
         );
@@ -114,17 +114,17 @@ impl Looper {
         config: &Config,
         apply_vote: &mut impl FnMut(i32) -> Result<()>,
     ) -> Result<(i32, u32, bool)> {
-        if let (Some(vote), Some(step)) = (self.current_vote, self.locked_step_ma) {
+        if let (Some(vote), Some(step)) = (self.current_vote, self.locked_ramp_step_ma) {
             return Ok((vote, step, false));
         }
-        let step = config.ufcs_step_ma;
+        let step = config.ufcs_ramp_step_ma;
         let vote = match i32::try_from(step) {
             Ok(step) => step.min(config.ufcs_max_vote),
             Err(_) => config.ufcs_max_vote,
         };
         apply_vote(vote)?;
         self.current_vote = Some(vote);
-        self.locked_step_ma = Some(step);
+        self.locked_ramp_step_ma = Some(step);
         Ok((vote, step, true))
     }
 
@@ -147,16 +147,16 @@ impl Looper {
     const fn reset_session(&mut self) {
         self.cut_off = false;
         self.current_vote = None;
-        self.locked_step_ma = None;
+        self.locked_ramp_step_ma = None;
         self.constant_current = false;
         self.constant_voltage = false;
     }
 
     fn next_vote(
         &mut self,
+        config: &Config,
         current: i32,
-        step: u32,
-        max: i32,
+        ramp_step: u32,
         first_sample: bool,
         over_voltage: bool,
     ) -> i32 {
@@ -164,13 +164,15 @@ impl Looper {
             return 0;
         }
         if over_voltage {
-            return current.saturating_sub_unsigned(step).max(0);
+            return current
+                .saturating_sub_unsigned(config.ufcs_taper_step_ma)
+                .max(0);
         }
         if first_sample || self.constant_current || self.constant_voltage {
             return current;
         }
-        let next = current.saturating_add_unsigned(step);
-        if next > max {
+        let next = current.saturating_add_unsigned(ramp_step);
+        if next > config.ufcs_max_vote {
             self.constant_current = true;
             info!(current_vote_ma = current, "升流已达上限，进入恒流充电阶段");
             current
