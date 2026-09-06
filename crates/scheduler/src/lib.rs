@@ -56,7 +56,7 @@ impl Scheduler {
         });
     }
 
-    pub fn start_run(&mut self) -> Result<()> {
+    pub fn start_run(&self) -> Result<()> {
         self.start_config_watcher();
         Looper::new().enter_loop(&self.atomic_config)
     }
