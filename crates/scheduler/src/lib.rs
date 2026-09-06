@@ -1,4 +1,3 @@
-mod constant_current;
 pub mod looper;
 mod ramp_up;
 mod taper;
@@ -12,19 +11,14 @@ use looper::Looper;
 use tracing::{error, info};
 
 pub struct Scheduler {
-    looper: Looper,
     atomic_config: Arc<AtomicConfig>,
 }
 
 impl Scheduler {
     pub fn new() -> Result<Self> {
         let atomic_config = Arc::new(AtomicConfig::init()?);
-        let looper = Looper::new();
 
-        Ok(Self {
-            looper,
-            atomic_config,
-        })
+        Ok(Self { atomic_config })
     }
 
     fn start_config_watcher(&self) {
@@ -64,6 +58,6 @@ impl Scheduler {
 
     pub fn start_run(&mut self) -> Result<()> {
         self.start_config_watcher();
-        self.looper.enter_loop(&self.atomic_config)
+        Looper::new().enter_loop(&self.atomic_config)
     }
 }

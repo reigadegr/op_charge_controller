@@ -7,7 +7,7 @@ use std::{
     time::Duration,
 };
 
-use crate::{constant_current, ramp_up, taper};
+use crate::{ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use tracing::{error, info, warn};
@@ -19,13 +19,24 @@ const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
 const UFCS_CHARGE_TYPE: u32 = 15;
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ChargePhase {
+    RampUp,
+    ConstantCurrent,
+    ConstantVoltage,
+}
+
+#[derive(Clone, Copy)]
+struct Session {
+    current_vote: i32,
+    ramp_step_ma: u32,
+}
+
 pub struct Looper {
     was_charging: Option<bool>,
-    current_vote: Option<i32>,
-    locked_ramp_step_ma: Option<u32>,
+    session: Option<Session>,
     cut_off: bool,
-    constant_current: bool,
-    constant_voltage: bool,
+    phase: ChargePhase,
 }
 
 impl Looper {
@@ -33,11 +44,9 @@ impl Looper {
     pub const fn new() -> Self {
         Self {
             was_charging: None,
-            current_vote: None,
-            locked_ramp_step_ma: None,
+            session: None,
             cut_off: false,
-            constant_current: false,
-            constant_voltage: false,
+            phase: ChargePhase::RampUp,
         }
     }
 
@@ -117,7 +126,8 @@ impl Looper {
         read_params: impl FnOnce() -> io::Result<BccParams>,
         mut apply_vote: impl FnMut(i32) -> Result<()>,
     ) -> Result<()> {
-        let (current, ramp_step, first_sample) = self.start_session(config, &mut apply_vote)?;
+        let (mut session, first_sample) = self.start_session(config, &mut apply_vote)?;
+        let current = session.current_vote;
         let params = read_params().context("读取充电数据失败")?;
         info!(
             cell_voltage_1_mv = params.cell_voltage_1_mv,
@@ -125,18 +135,20 @@ impl Looper {
             current_ma = params.current_ma,
             "充电数据"
         );
-        self.update_voltage_state(config, &params);
+        let over_voltage = Self::over_constant_voltage(config, &params);
+        self.update_voltage_state(config, &params, over_voltage);
         let next = self.next_vote(
             config,
             current,
-            ramp_step,
+            session.ramp_step_ma,
             first_sample,
             params.current_ma,
-            Self::over_constant_voltage(config, &params),
+            over_voltage,
         );
         if next != current {
             apply_vote(next)?;
-            self.current_vote = Some(next);
+            session.current_vote = next;
+            self.session = Some(session);
             if self.cut_off {
                 warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
             }
@@ -148,9 +160,9 @@ impl Looper {
         &mut self,
         config: &Config,
         apply_vote: &mut impl FnMut(i32) -> Result<()>,
-    ) -> Result<(i32, u32, bool)> {
-        if let (Some(vote), Some(step)) = (self.current_vote, self.locked_ramp_step_ma) {
-            return Ok((vote, step, false));
+    ) -> Result<(Session, bool)> {
+        if let Some(session) = self.session {
+            return Ok((session, false));
         }
         let step = config.ufcs_ramp_step_ma;
         let vote = match i32::try_from(step) {
@@ -158,15 +170,18 @@ impl Looper {
             Err(_) => config.ufcs_max_vote,
         };
         apply_vote(vote)?;
-        self.current_vote = Some(vote);
-        self.locked_ramp_step_ma = Some(step);
-        Ok((vote, step, true))
+        let session = Session {
+            current_vote: vote,
+            ramp_step_ma: step,
+        };
+        self.session = Some(session);
+        Ok((session, true))
     }
 
-    fn update_voltage_state(&mut self, config: &Config, params: &BccParams) {
+    fn update_voltage_state(&mut self, config: &Config, params: &BccParams, over_voltage: bool) {
         self.cut_off |= params.cell_voltage_1_mv >= f64::from(config.charge_cutoff_mv);
-        if Self::over_constant_voltage(config, params) && !self.constant_voltage {
-            self.constant_voltage = true;
+        if over_voltage && self.phase != ChargePhase::ConstantVoltage {
+            self.phase = ChargePhase::ConstantVoltage;
             info!(
                 constant_voltage_mv = config.constant_voltage_mv,
                 "电芯电压达到恒压阈值，进入恒压降流阶段"
@@ -181,10 +196,8 @@ impl Looper {
 
     const fn reset_session(&mut self) {
         self.cut_off = false;
-        self.current_vote = None;
-        self.locked_ramp_step_ma = None;
-        self.constant_current = false;
-        self.constant_voltage = false;
+        self.session = None;
+        self.phase = ChargePhase::RampUp;
     }
 
     fn next_vote(
@@ -199,18 +212,22 @@ impl Looper {
         if self.cut_off {
             return 0;
         }
-        if over_voltage {
-            return taper::next(measured_current_ma, config);
+        match self.phase {
+            ChargePhase::ConstantVoltage if over_voltage => {
+                taper::next(measured_current_ma, config)
+            }
+            ChargePhase::ConstantVoltage | ChargePhase::ConstantCurrent => current,
+            ChargePhase::RampUp => {
+                if first_sample {
+                    return current;
+                }
+                let (next, reached) = ramp_up::next(current, ramp_step, config);
+                if reached {
+                    self.phase = ChargePhase::ConstantCurrent;
+                }
+                next
+            }
         }
-        if first_sample || self.constant_voltage {
-            return current;
-        }
-        if self.constant_current {
-            return constant_current::next(current);
-        }
-        let (next, reached) = ramp_up::next(current, ramp_step, config);
-        self.constant_current |= reached;
-        next
     }
 
     fn get_battery_status(file: &mut Option<File>, content: &mut String) -> io::Result<bool> {

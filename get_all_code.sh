@@ -8,7 +8,7 @@ fi
 name=$(basename "$PWD")
 rm -f target/"$name"_all_code.txt
 {
-    for i in $(fd -t f rs) Cargo.toml ./*/Cargo.toml; do
+    for i in $(fd -t f rs) Cargo.toml crates/*/Cargo.toml; do
         # i="$(realpath $i)"
         echo "这是$i: "
         cat "$i"

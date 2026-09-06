@@ -22,12 +22,16 @@ fn masks_dir(executable: &Path) -> io::Result<PathBuf> {
 
 pub fn lock_val(value: &str, path: &Path) -> io::Result<()> {
     let file = path.canonicalize()?;
+    let value = format!("{value}\n");
+    lock_value(&file, &value)
+}
 
-    let _ = unmount(&file, UnmountFlags::empty());
-    chown(&file, Some(Uid::ROOT), Some(Gid::ROOT))?;
-    chmod(&file, Mode::from_raw_mode(0o644))?;
-    fs::write(&file, format!("{value}\n"))?;
-    chmod(&file, Mode::from_raw_mode(0o444))?;
+fn lock_value(file: &Path, value: &str) -> io::Result<()> {
+    let _ = unmount(file, UnmountFlags::empty());
+    chown(file, Some(Uid::ROOT), Some(Gid::ROOT))?;
+    chmod(file, Mode::from_raw_mode(0o644))?;
+    fs::write(file, value)?;
+    chmod(file, Mode::from_raw_mode(0o444))?;
 
     Ok(())
 }
@@ -37,14 +41,14 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
         .as_ref()
         .map_err(|error| io::Error::new(error.kind(), format!("获取 masks 目录失败: {error}")))?;
     let file = path.canonicalize()?;
-    lock_val(value, &file)?;
+    let value = format!("{value}\n");
+    lock_value(&file, &value)?;
 
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
         .as_nanos();
     let mask = masks_dir.join(format!("mask_{time}"));
-    let value = format!("{value}\n");
     if let Err(err) = fs::write(&mask, &value) {
         if err.kind() != io::ErrorKind::NotFound {
             return Err(err);
