@@ -1,5 +1,6 @@
 use std::{fs, io, path::Path, sync::Arc, thread, time::Duration};
 
+use crate::{constant_current, ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use tracing::{error, info, warn};
@@ -164,21 +165,17 @@ impl Looper {
             return 0;
         }
         if over_voltage {
-            return current
-                .saturating_sub_unsigned(config.ufcs_taper_step_ma)
-                .max(0);
+            return taper::next(current, config);
         }
-        if first_sample || self.constant_current || self.constant_voltage {
+        if first_sample || self.constant_voltage {
             return current;
         }
-        let next = current.saturating_add_unsigned(ramp_step);
-        if next > config.ufcs_max_vote {
-            self.constant_current = true;
-            info!(current_vote_ma = current, "升流已达上限，进入恒流充电阶段");
-            current
-        } else {
-            next
+        if self.constant_current {
+            return constant_current::next(current);
         }
+        let (next, reached) = ramp_up::next(current, ramp_step, config);
+        self.constant_current |= reached;
+        next
     }
 
     fn get_battery_status() -> Result<bool> {

@@ -1,4 +1,7 @@
+mod constant_current;
 pub mod looper;
+mod ramp_up;
+mod taper;
 
 use std::{sync::Arc, thread, time::Duration};
 
