@@ -1,9 +1,7 @@
-use std::{
-    io,
-    process::{Command, Stdio},
-};
+use std::io;
 
 use anyhow::{Context, Result};
+use dumpsys_rs::Dumpsys;
 use tracing::{error, info, warn};
 
 const BATTERY_LEVEL_LOCK_THRESHOLD: u8 = 3;
@@ -71,20 +69,17 @@ impl BatteryDisplay {
     }
 }
 
-pub(super) fn apply_battery_display_action(action: BatteryDisplayAction) -> Result<()> {
+pub(super) fn apply_battery_display_action(
+    battery_dumper: &Dumpsys,
+    action: BatteryDisplayAction,
+) -> Result<()> {
     let args: &[&str] = match action {
-        BatteryDisplayAction::Reset => &["battery", "reset"],
-        BatteryDisplayAction::LockLowLevel => &["battery", "set", "level", BATTERY_LOCKED_LEVEL],
+        BatteryDisplayAction::Reset => &["reset"],
+        BatteryDisplayAction::LockLowLevel => &["set", "level", BATTERY_LOCKED_LEVEL],
     };
-    let status = Command::new("/system/bin/dumpsys")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .with_context(|| format!("执行 dumpsys {} 失败", args.join(" ")))?;
-    if !status.success() {
-        anyhow::bail!("dumpsys {} 执行失败，退出码为 {status}", args.join(" "));
-    }
+    battery_dumper
+        .dump(args)
+        .with_context(|| format!("执行 dumpsys battery {} 失败", args.join(" ")))?;
 
     match action {
         BatteryDisplayAction::Reset => info!("进入充电，电池显示已恢复真实值"),

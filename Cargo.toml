@@ -6,6 +6,7 @@ resolver = "3"
 anyhow = "1.0.104"
 arc-swap = "1.9.2"
 chrono = "0.4.45"
+dumpsys-rs = { git = "https://github.com/shadow3aaa/dumpsys-rs", rev = "1e7c3299dcbdbbd8a992c0b926a8060ac1ac9d39" }
 inotify = { version = "0.11.5", default-features = false }
 mimalloc = { version = "0.1.52", features = ["override", "v2", "no_thp"] }
 rustix = { version = "1.1.4", features = ["fs", "mount"] }
