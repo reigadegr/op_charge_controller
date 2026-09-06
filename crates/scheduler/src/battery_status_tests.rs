@@ -157,3 +157,47 @@ fn battery_capacity_read_failure_does_not_lock_display() {
 
     assert!(actions.is_empty());
 }
+
+#[test]
+fn failed_display_reset_is_retried_while_charging() {
+    let mut looper = Looper::new();
+    let mut actions = Vec::new();
+
+    looper.battery_display.handle(
+        false,
+        || Ok(65),
+        |action| {
+            actions.push(action);
+            Ok(())
+        },
+    );
+    looper.battery_display.handle(
+        true,
+        || Ok(2),
+        |action| {
+            actions.push(action);
+            anyhow::bail!("failed")
+        },
+    );
+    looper.battery_display.handle(
+        true,
+        || Ok(2),
+        |action| {
+            actions.push(action);
+            Ok(())
+        },
+    );
+    looper.battery_display.handle(
+        true,
+        || Ok(2),
+        |action| {
+            actions.push(action);
+            Ok(())
+        },
+    );
+
+    assert_eq!(
+        actions,
+        [BatteryDisplayAction::Reset, BatteryDisplayAction::Reset]
+    );
+}

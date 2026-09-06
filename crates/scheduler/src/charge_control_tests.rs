@@ -121,6 +121,55 @@ fn failed_vote_is_retried_without_advancing_state() {
 }
 
 #[test]
+fn failed_cap_vote_does_not_advance_to_constant_current() {
+    let config = Config {
+        ufcs_max_vote: 250,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [100]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [200]
+    );
+
+    let previous_charging = looper.battery_display.handle(true, || Ok(65), |_| Ok(()));
+    looper.handle_battery_status(
+        &config,
+        || Ok(params(4400.0, 4390.0)),
+        || Ok(UFCS_CHARGE_TYPE),
+        |_| anyhow::bail!("failed"),
+        previous_charging,
+        true,
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [250]
+    );
+}
+
+#[test]
 fn ramp_and_taper_use_their_own_steps() {
     let config = Config {
         ufcs_ramp_step_ma: 200,
@@ -233,5 +282,46 @@ fn taper_uses_last_recorded_current_and_floors_at_zero() {
             params_with_current(4500.0, 4390.0, 30.0)
         )
         .is_empty()
+    );
+}
+
+#[test]
+fn hot_reload_updates_taper_but_not_locked_ramp_step() {
+    let initial_config = config();
+    let reloaded_config = Config {
+        ufcs_ramp_step_ma: 500,
+        ufcs_taper_step_ma: 50,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick(
+            &mut looper,
+            &initial_config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [100]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &reloaded_config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [200]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &reloaded_config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params_with_current(4500.0, 4390.0, -180.0)
+        ),
+        [130]
     );
 }

@@ -6,7 +6,7 @@ use anyhow::Result;
 use arc_swap::{ArcSwap, Guard};
 use format_profile::format_toml;
 use serde::Deserialize;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 const DEFAULT_PROFILE: &str = "./op_charge.toml";
 
@@ -19,6 +19,31 @@ pub struct Config {
     pub charge_cutoff_mv: i32,
 }
 
+impl Config {
+    fn validate(&self) -> Result<()> {
+        if self.ufcs_max_vote <= 0 {
+            anyhow::bail!("ufcs_max_vote 必须为正数");
+        }
+        if self.ufcs_ramp_step_ma == 0 {
+            anyhow::bail!("ufcs_ramp_step_ma 必须为正数");
+        }
+        if self.ufcs_taper_step_ma == 0 {
+            anyhow::bail!("ufcs_taper_step_ma 必须为正数");
+        }
+        if self.constant_voltage_mv <= 0 {
+            anyhow::bail!("constant_voltage_mv 必须为正数");
+        }
+        if self.charge_cutoff_mv <= 0 {
+            anyhow::bail!("charge_cutoff_mv 必须为正数");
+        }
+        if self.charge_cutoff_mv < self.constant_voltage_mv {
+            anyhow::bail!("charge_cutoff_mv 不能小于 constant_voltage_mv");
+        }
+
+        Ok(())
+    }
+}
+
 pub struct AtomicConfig {
     inner: ArcSwap<Config>,
     profile: String,
@@ -26,14 +51,19 @@ pub struct AtomicConfig {
 
 impl AtomicConfig {
     pub fn init() -> Result<Self> {
-        let profile = profile_path();
-        let raw_content = fs::read_to_string(&profile)?;
-        let formatted_content = format_toml(&raw_content);
-        if formatted_content != raw_content {
-            let _ = fs::write(&profile, formatted_content);
-        }
+        Self::from_path(profile_path())
+    }
 
-        let config = toml::from_str(&raw_content)?;
+    pub fn from_path(profile: impl Into<String>) -> Result<Self> {
+        let profile = profile.into();
+        let raw_content = fs::read_to_string(&profile)?;
+        let config = parse_config(&raw_content)?;
+        let formatted_content = format_toml(&raw_content);
+        if formatted_content != raw_content
+            && let Err(error) = fs::write(&profile, &formatted_content)
+        {
+            warn!("Failed to format config profile {profile}: {error}.");
+        }
 
         Ok(Self {
             inner: ArcSwap::from(Arc::new(config)),
@@ -62,7 +92,7 @@ impl AtomicConfig {
             }
         };
 
-        let new_config = match toml::from_str(&raw_content) {
+        let new_config = match parse_config(&raw_content) {
             Ok(new_config) => new_config,
             Err(e) => {
                 error!(
@@ -78,10 +108,58 @@ impl AtomicConfig {
     }
 }
 
+fn parse_config(content: &str) -> Result<Config> {
+    let config: Config = toml::from_str(content)?;
+    config.validate()?;
+
+    Ok(config)
+}
+
 #[must_use]
 pub fn profile_path() -> String {
     match env::args().nth(1) {
         Some(profile) => profile,
         None => DEFAULT_PROFILE.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn valid_config() -> &'static str {
+        "\
+ufcs_max_vote = 6200
+ufcs_ramp_step_ma = 300
+ufcs_taper_step_ma = 100
+constant_voltage_mv = 4500
+charge_cutoff_mv = 4570
+"
+    }
+
+    #[test]
+    fn parses_a_valid_config() -> Result<()> {
+        let config = parse_config(valid_config())?;
+
+        assert_eq!(config.ufcs_max_vote, 6200);
+        assert_eq!(config.ufcs_ramp_step_ma, 300);
+        assert_eq!(config.ufcs_taper_step_ma, 100);
+        assert_eq!(config.constant_voltage_mv, 4500);
+        assert_eq!(config.charge_cutoff_mv, 4570);
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_invalid_config_semantics() {
+        assert!(parse_config("ufcs_max_vote = 0\nufcs_ramp_step_ma = 300\nufcs_taper_step_ma = 100\nconstant_voltage_mv = 4500\ncharge_cutoff_mv = 4570\n").is_err());
+        assert!(parse_config("ufcs_max_vote = 6200\nufcs_ramp_step_ma = 0\nufcs_taper_step_ma = 100\nconstant_voltage_mv = 4500\ncharge_cutoff_mv = 4570\n").is_err());
+        assert!(parse_config("ufcs_max_vote = 6200\nufcs_ramp_step_ma = 300\nufcs_taper_step_ma = 0\nconstant_voltage_mv = 4500\ncharge_cutoff_mv = 4570\n").is_err());
+        assert!(parse_config("ufcs_max_vote = 6200\nufcs_ramp_step_ma = 300\nufcs_taper_step_ma = 100\nconstant_voltage_mv = 4570\ncharge_cutoff_mv = 4500\n").is_err());
+    }
+
+    #[test]
+    fn rejects_malformed_config() {
+        assert!(parse_config("ufcs_max_vote = 6200\n").is_err());
     }
 }

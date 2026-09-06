@@ -148,8 +148,9 @@ impl Looper {
             params.current_ma,
             over_voltage,
         );
-        self.session = Some(session);
-        if next != current {
+        if next == current {
+            self.session = Some(session);
+        } else {
             apply_vote(next)?;
             session.current_vote = next;
             self.session = Some(session);

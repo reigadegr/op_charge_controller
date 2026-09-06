@@ -42,21 +42,15 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
         .map_err(|error| io::Error::new(error.kind(), format!("获取 masks 目录失败: {error}")))?;
     let file = path.canonicalize()?;
     let value = format!("{value}\n");
-    lock_value(&file, &value)?;
-
-    let time = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map_err(io::Error::other)?
-        .as_nanos();
-    let mask = masks_dir.join(format!("mask_{time}"));
-    if let Err(err) = fs::write(&mask, &value) {
-        if err.kind() != io::ErrorKind::NotFound {
-            return Err(err);
-        }
-        fs::create_dir_all(masks_dir)?;
-        fs::write(&mask, value)?;
+    let mask = write_mask_file(masks_dir, &value)?;
+    if let Err(error) = lock_value(&file, &value) {
+        let _ = fs::remove_file(&mask);
+        return Err(error);
     }
-    mount_bind(&mask, &file)?;
+    if let Err(error) = mount_bind(&mask, &file) {
+        let _ = fs::remove_file(&mask);
+        return Err(error.into());
+    }
 
     let _ = Command::new("/system/bin/restorecon")
         .args(["-R", "-F"])
@@ -66,4 +60,55 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
         .status();
 
     Ok(())
+}
+
+fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_err(io::Error::other)?
+        .as_nanos();
+    let mask = masks_dir.join(format!("mask_{time}"));
+    if let Err(error) = fs::write(&mask, value)
+        && error.kind() != io::ErrorKind::NotFound
+    {
+        return Err(error);
+    }
+    if !mask.exists() {
+        fs::create_dir_all(masks_dir)?;
+        fs::write(&mask, value)?;
+    }
+
+    Ok(mask)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn masks_dir_is_next_to_executable() {
+        let masks_dir = masks_dir(Path::new("/system/bin/op_charge_controller"));
+
+        assert!(matches!(
+            masks_dir,
+            Ok(path) if path == Path::new("/system/bin/masks")
+        ));
+    }
+
+    #[test]
+    fn masks_dir_rejects_executable_without_parent() {
+        assert!(masks_dir(Path::new("/")).is_err());
+    }
+
+    #[test]
+    fn write_mask_file_creates_missing_masks_directory() -> io::Result<()> {
+        let masks_dir =
+            std::env::temp_dir().join(format!("op_charge_controller_{}_masks", std::process::id()));
+        let _ = std::fs::remove_dir_all(&masks_dir);
+
+        let mask = write_mask_file(&masks_dir, "1\n")?;
+
+        assert_eq!(std::fs::read_to_string(&mask)?, "1\n");
+        std::fs::remove_dir_all(masks_dir)
+    }
 }

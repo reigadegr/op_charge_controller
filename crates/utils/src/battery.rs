@@ -82,11 +82,22 @@ impl BccParamsReader {
 fn parse_bcc_params(content: &str) -> io::Result<BccParams> {
     let content = content.trim();
 
-    Ok(BccParams {
+    let params = BccParams {
         cell_voltage_1_mv: parse_field(content, 6, "第一电芯电压")?,
         current_ma: parse_field(content, 8, "电流")?,
         cell_voltage_2_mv: parse_field(content, 11, "第二电芯电压")?,
-    })
+    };
+    if !params.cell_voltage_1_mv.is_finite()
+        || !params.cell_voltage_2_mv.is_finite()
+        || !params.current_ma.is_finite()
+    {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "充电数据包含非有限数值",
+        ));
+    }
+
+    Ok(params)
 }
 
 #[derive(Debug)]
@@ -176,6 +187,18 @@ mod tests {
     fn rejects_missing_bcc_params_fields() {
         assert!(matches!(
             parse_bcc_params("0,1,2"),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[test]
+    fn rejects_non_finite_bcc_params_fields() {
+        assert!(matches!(
+            parse_bcc_params("0,1,2,3,4,5,NaN,7,-5000,9,10,4390"),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData
+        ));
+        assert!(matches!(
+            parse_bcc_params("0,1,2,3,4,5,4400,7,inf,9,10,4390"),
             Err(error) if error.kind() == io::ErrorKind::InvalidData
         ));
     }

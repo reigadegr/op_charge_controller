@@ -39,8 +39,10 @@ impl BatteryDisplay {
         let entered_charging = previous == Some(false) && charging;
         if entered_charging {
             self.low_level_locked = false;
-            let _ = apply_action(BatteryDisplayAction::Reset)
-                .inspect_err(|error| error!("恢复电池显示失败: {error:#}"));
+            if let Err(error) = apply_action(BatteryDisplayAction::Reset) {
+                error!("恢复电池显示失败: {error:#}");
+                self.was_charging = Some(false);
+            }
             return previous;
         }
 
