@@ -1,6 +1,5 @@
 use std::{io, path::Path, sync::Arc, thread, time::Duration};
 
-use crate::{ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use dumpsys_rs::Dumpsys;
@@ -9,12 +8,13 @@ use utils::{
     BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, mask_val,
 };
 
+use crate::{ramp_up, taper};
+
 #[path = "battery_display.rs"]
 mod battery_display;
 
-use battery_display::{BatteryDisplay, apply_battery_display_action};
-
 pub use battery_display::BatteryDisplayAction;
+use battery_display::{BatteryDisplay, apply_battery_display_action};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
