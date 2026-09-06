@@ -37,12 +37,14 @@ impl Looper {
         let mut reader = BccParamsReader::new()?;
         loop {
             match Self::get_battery_status() {
-                Ok(charging) => self.handle_battery_status(
-                    &config_manager.get(),
-                    || reader.read(),
-                    Self::apply_ufcs_vote,
-                    charging,
-                ),
+                Ok(charging) => {
+                    self.handle_battery_status(
+                        &config_manager.get(),
+                        || reader.read(),
+                        Self::apply_ufcs_vote,
+                        charging,
+                    );
+                }
                 Err(error) => error!("读取电池状态失败: {error}"),
             }
             thread::sleep(Duration::from_secs(1));
@@ -55,8 +57,11 @@ impl Looper {
         read_params: impl FnOnce() -> io::Result<BccParams>,
         apply_vote: impl FnMut(i32) -> Result<()>,
         charging: bool,
-    ) {
+    ) -> bool {
         let previous = self.was_charging.replace(charging);
+        if !charging && previous == Some(false) {
+            return false;
+        }
         if previous.is_some_and(|was| was != charging) {
             info!(
                 "{}",
@@ -76,6 +81,7 @@ impl Looper {
                 .inspect_err(|error| error!("处理充电数据失败: {error:#}"));
         }
         info!("{}", if charging { "充电中" } else { "未充电" });
+        true
     }
 
     fn handle_charge_data(

@@ -125,3 +125,19 @@ fn a_new_session_restarts_from_initial_step() {
         [100]
     );
 }
+
+#[test]
+fn repeated_not_charging_status_is_skipped() {
+    let config = config();
+    let mut looper = Looper::new();
+    let read_params = || Ok(params(4400.0, 4390.0));
+    let apply_vote = |_| Ok(());
+
+    assert!(looper.handle_battery_status(&config, read_params, apply_vote, false,));
+    assert!(!looper.handle_battery_status(
+        &config,
+        || Ok(params(4400.0, 4390.0)),
+        |_| Ok(()),
+        false,
+    ));
+}
