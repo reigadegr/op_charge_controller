@@ -2,6 +2,7 @@ use std::{
     fs::File,
     io::{self, Read, Seek},
     path::Path,
+    process::{Command, Stdio},
     sync::Arc,
     thread,
     time::Duration,
@@ -11,13 +12,75 @@ use crate::{ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use tracing::{error, info, warn};
-use utils::{BccParams, BccParamsReader, ChargeTypeReader, mask_val};
+use utils::{BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, mask_val};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
+const BATTERY_LEVEL_LOCK_THRESHOLD: u8 = 3;
+const BATTERY_LOCKED_LEVEL: u8 = 2;
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
 const UFCS_CHARGE_TYPE: u32 = 15;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum BatteryDisplayAction {
+    Reset,
+    LockLowLevel,
+}
+
+#[derive(Clone, Copy)]
+struct BatteryDisplay {
+    was_charging: Option<bool>,
+    low_level_locked: bool,
+}
+
+impl BatteryDisplay {
+    const fn new() -> Self {
+        Self {
+            was_charging: None,
+            low_level_locked: false,
+        }
+    }
+
+    fn handle(
+        &mut self,
+        charging: bool,
+        read_capacity: impl FnOnce() -> io::Result<u8>,
+        mut apply_action: impl FnMut(BatteryDisplayAction) -> Result<()>,
+    ) -> Option<bool> {
+        let previous = self.was_charging.replace(charging);
+        let entered_charging = previous == Some(false) && charging;
+        if entered_charging {
+            self.low_level_locked = false;
+            let _ = apply_action(BatteryDisplayAction::Reset)
+                .inspect_err(|error| error!("恢复电池显示失败: {error:#}"));
+            return previous;
+        }
+
+        let action = if charging || self.low_level_locked {
+            None
+        } else {
+            match read_capacity() {
+                Ok(level) if level < BATTERY_LEVEL_LOCK_THRESHOLD => {
+                    Some(BatteryDisplayAction::LockLowLevel)
+                }
+                Ok(_) => None,
+                Err(error) => {
+                    error!("读取电池电量失败: {error}");
+                    None
+                }
+            }
+        };
+        if let Some(action) = action {
+            match apply_action(action) {
+                Ok(()) => self.low_level_locked = true,
+                Err(error) => error!("锁定电池显示失败: {error:#}"),
+            }
+        }
+
+        previous
+    }
+}
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ChargePhase {
@@ -33,7 +96,7 @@ struct Session {
 }
 
 pub struct Looper {
-    was_charging: Option<bool>,
+    battery_display: BatteryDisplay,
     session: Option<Session>,
     cut_off: bool,
     phase: ChargePhase,
@@ -43,7 +106,7 @@ impl Looper {
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            was_charging: None,
+            battery_display: BatteryDisplay::new(),
             session: None,
             cut_off: false,
             phase: ChargePhase::RampUp,
@@ -53,16 +116,23 @@ impl Looper {
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let mut reader = BccParamsReader::new()?;
         let mut charge_type_reader = ChargeTypeReader::new()?;
+        let mut capacity_reader = BatteryCapacityReader::new()?;
         let mut status_file = None;
         let mut status_content = String::with_capacity(16);
         loop {
             match Self::get_battery_status(&mut status_file, &mut status_content) {
                 Ok(charging) => {
+                    let previous_charging = self.battery_display.handle(
+                        charging,
+                        || capacity_reader.read(),
+                        Self::apply_battery_display_action,
+                    );
                     self.handle_battery_status(
                         &config_manager.get(),
                         || reader.read(),
                         || charge_type_reader.read(),
                         Self::apply_ufcs_vote,
+                        previous_charging,
                         charging,
                     );
                 }
@@ -78,9 +148,9 @@ impl Looper {
         read_params: impl FnOnce() -> io::Result<BccParams>,
         read_charge_type: impl FnOnce() -> io::Result<u32>,
         apply_vote: impl FnMut(i32) -> Result<()>,
+        previous: Option<bool>,
         charging: bool,
     ) -> bool {
-        let previous = self.was_charging.replace(charging);
         if !charging && previous == Some(false) {
             return false;
         }
@@ -258,6 +328,32 @@ impl Looper {
             .context("设置 UFCS 电流失败")?;
         mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("启用 UFCS 强制投票失败")?;
         info!(current_vote_ma = vote, "UFCS 电流已锁定");
+        Ok(())
+    }
+
+    fn apply_battery_display_action(action: BatteryDisplayAction) -> Result<()> {
+        let command = match action {
+            BatteryDisplayAction::Reset => "dumpsys battery reset",
+            BatteryDisplayAction::LockLowLevel => "dumpsys battery set level 2",
+        };
+        let status = Command::new("/system/bin/su")
+            .arg("-c")
+            .arg(command)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .with_context(|| format!("执行 {command} 失败"))?;
+        if !status.success() {
+            anyhow::bail!("{command} 执行失败，退出码为 {status}");
+        }
+
+        match action {
+            BatteryDisplayAction::Reset => info!("进入充电，电池显示已恢复真实值"),
+            BatteryDisplayAction::LockLowLevel => warn!(
+                locked_level = BATTERY_LOCKED_LEVEL,
+                "电池电量低于3%，电池显示已锁定"
+            ),
+        }
         Ok(())
     }
 }

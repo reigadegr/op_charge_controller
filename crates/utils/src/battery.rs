@@ -6,6 +6,7 @@ use std::{
 
 const BCC_PARMS_PATH: &str = "/sys/class/oplus_chg/battery/bcc_parms";
 const BATTERY_LOG_CONTENT_PATH: &str = "/sys/class/oplus_chg/battery/battery_log_content";
+const BATTERY_CAPACITY_PATH: &str = "/sys/class/power_supply/battery/capacity";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BccParams {
@@ -80,6 +81,32 @@ impl ChargeTypeReader {
     }
 }
 
+#[derive(Debug)]
+pub struct BatteryCapacityReader {
+    reader: SysfsReader,
+}
+
+impl BatteryCapacityReader {
+    pub fn new() -> io::Result<Self> {
+        Ok(Self {
+            reader: SysfsReader::new(BATTERY_CAPACITY_PATH, 4)?,
+        })
+    }
+
+    pub fn read(&mut self) -> io::Result<u8> {
+        parse_battery_capacity(self.reader.read()?)
+    }
+}
+
+fn parse_battery_capacity(content: &str) -> io::Result<u8> {
+    content.trim().parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("解析电池电量失败: {error}"),
+        )
+    })
+}
+
 fn parse_field<T>(content: &str, index: usize, name: &str) -> io::Result<T>
 where
     T: FromStr,
@@ -137,6 +164,14 @@ mod tests {
             parse_field::<u32>(" 0,1,2,3,4,5,6,7,8, 14 ,10,11\n", 9, "充电器类型")?,
             14
         );
+
+        Ok(())
+    }
+
+    #[test]
+    fn parses_battery_capacity() -> io::Result<()> {
+        assert_eq!(parse_battery_capacity("65\n")?, 65);
+        assert_eq!(parse_battery_capacity(" 2 ")?, 2);
 
         Ok(())
     }
