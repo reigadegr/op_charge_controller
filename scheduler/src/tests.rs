@@ -33,7 +33,7 @@ fn tick(looper: &mut Looper, config: &Config, charging: bool, p: BccParams) -> V
 }
 
 #[test]
-fn ramps_by_one_locked_step_and_holds_at_cap() {
+fn ramps_by_one_locked_step_and_enters_constant_current_at_cap() {
     let config = Config {
         ufcs_max_vote: 250,
         ..config()
@@ -46,6 +46,10 @@ fn ramps_by_one_locked_step_and_holds_at_cap() {
     assert_eq!(
         tick(&mut looper, &config, true, params(4400.0, 4390.0)),
         [200]
+    );
+    assert_eq!(
+        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        [250]
     );
     assert!(tick(&mut looper, &config, true, params(4400.0, 4390.0)).is_empty());
 }
