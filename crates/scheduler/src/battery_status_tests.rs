@@ -40,27 +40,34 @@ fn a_new_session_restarts_from_initial_step() {
 fn repeated_not_charging_status_is_skipped() {
     let config = config();
     let mut looper = Looper::new();
-    let read_params = || Ok(params(4400.0, 4390.0));
-    let apply_vote = |_| Ok(());
+    let mut votes = Vec::new();
     let first_previous = looper.battery_display.handle(false, || Ok(65), |_| Ok(()));
 
-    assert!(looper.handle_battery_status(
-        &config,
-        read_params,
-        || Ok(UFCS_CHARGE_TYPE),
-        apply_vote,
-        first_previous,
-        false,
-    ));
-    let second_previous = looper.battery_display.handle(false, || Ok(65), |_| Ok(()));
-    assert!(!looper.handle_battery_status(
+    looper.handle_battery_status(
         &config,
         || Ok(params(4400.0, 4390.0)),
         || Ok(UFCS_CHARGE_TYPE),
-        |_| Ok(()),
+        |vote| {
+            votes.push(vote);
+            Ok(())
+        },
+        first_previous,
+        false,
+    );
+    let second_previous = looper.battery_display.handle(false, || Ok(65), |_| Ok(()));
+    looper.handle_battery_status(
+        &config,
+        || Ok(params(4400.0, 4390.0)),
+        || Ok(UFCS_CHARGE_TYPE),
+        |vote| {
+            votes.push(vote);
+            Ok(())
+        },
         second_previous,
         false,
-    ));
+    );
+
+    assert!(votes.is_empty());
 }
 
 #[test]

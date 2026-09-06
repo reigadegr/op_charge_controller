@@ -35,13 +35,13 @@ enum ChargePhase {
 struct Session {
     current_vote: i32,
     ramp_step_ma: u32,
+    phase: ChargePhase,
+    cut_off: bool,
 }
 
 pub struct Looper {
     battery_display: BatteryDisplay,
     session: Option<Session>,
-    cut_off: bool,
-    phase: ChargePhase,
 }
 
 impl Looper {
@@ -50,8 +50,6 @@ impl Looper {
         Self {
             battery_display: BatteryDisplay::new(),
             session: None,
-            cut_off: false,
-            phase: ChargePhase::RampUp,
         }
     }
 
@@ -92,9 +90,9 @@ impl Looper {
         apply_vote: impl FnMut(i32) -> Result<()>,
         previous: Option<bool>,
         charging: bool,
-    ) -> bool {
+    ) {
         if !charging && previous == Some(false) {
-            return false;
+            return;
         }
         if previous.is_some_and(|was| was != charging) {
             info!(
@@ -121,7 +119,7 @@ impl Looper {
                 }
             };
         if ufcs && previous != Some(true) {
-            self.reset_session();
+            self.session = None;
         }
         if ufcs {
             let _ = self
@@ -129,7 +127,6 @@ impl Looper {
                 .inspect_err(|error| error!("处理充电数据失败: {error:#}"));
         }
         info!("{}", if charging { "充电中" } else { "未充电" });
-        true
     }
 
     fn handle_charge_data(
@@ -148,20 +145,20 @@ impl Looper {
             "充电数据"
         );
         let over_voltage = Self::over_constant_voltage(config, &params);
-        self.update_voltage_state(config, &params, over_voltage);
-        let next = self.next_vote(
+        Self::update_voltage_state(&mut session, config, &params, over_voltage);
+        let next = Self::next_vote(
+            &mut session,
             config,
-            current,
-            session.ramp_step_ma,
             first_sample,
             params.current_ma,
             over_voltage,
         );
+        self.session = Some(session);
         if next != current {
             apply_vote(next)?;
             session.current_vote = next;
             self.session = Some(session);
-            if self.cut_off {
+            if session.cut_off {
                 warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
             }
         }
@@ -185,15 +182,22 @@ impl Looper {
         let session = Session {
             current_vote: vote,
             ramp_step_ma: step,
+            phase: ChargePhase::RampUp,
+            cut_off: false,
         };
         self.session = Some(session);
         Ok((session, true))
     }
 
-    fn update_voltage_state(&mut self, config: &Config, params: &BccParams, over_voltage: bool) {
-        self.cut_off |= params.cell_voltage_1_mv >= f64::from(config.charge_cutoff_mv);
-        if over_voltage && self.phase != ChargePhase::ConstantVoltage {
-            self.phase = ChargePhase::ConstantVoltage;
+    fn update_voltage_state(
+        session: &mut Session,
+        config: &Config,
+        params: &BccParams,
+        over_voltage: bool,
+    ) {
+        session.cut_off |= params.cell_voltage_1_mv >= f64::from(config.charge_cutoff_mv);
+        if over_voltage && session.phase != ChargePhase::ConstantVoltage {
+            session.phase = ChargePhase::ConstantVoltage;
             info!(
                 constant_voltage_mv = config.constant_voltage_mv,
                 "电芯电压达到恒压阈值，进入恒压降流阶段"
@@ -206,36 +210,29 @@ impl Looper {
         params.cell_voltage_1_mv >= threshold || params.cell_voltage_2_mv >= threshold
     }
 
-    const fn reset_session(&mut self) {
-        self.cut_off = false;
-        self.session = None;
-        self.phase = ChargePhase::RampUp;
-    }
-
     fn next_vote(
-        &mut self,
+        session: &mut Session,
         config: &Config,
-        current: i32,
-        ramp_step: u32,
         first_sample: bool,
         measured_current_ma: f64,
         over_voltage: bool,
     ) -> i32 {
-        if self.cut_off {
+        if session.cut_off {
             return 0;
         }
-        match self.phase {
+        match session.phase {
             ChargePhase::ConstantVoltage if over_voltage => {
                 taper::next(measured_current_ma, config)
             }
-            ChargePhase::ConstantVoltage | ChargePhase::ConstantCurrent => current,
+            ChargePhase::ConstantVoltage | ChargePhase::ConstantCurrent => session.current_vote,
             ChargePhase::RampUp => {
                 if first_sample {
-                    return current;
+                    return session.current_vote;
                 }
-                let (next, reached) = ramp_up::next(current, ramp_step, config);
+                let (next, reached) =
+                    ramp_up::next(session.current_vote, session.ramp_step_ma, config);
                 if reached {
-                    self.phase = ChargePhase::ConstantCurrent;
+                    session.phase = ChargePhase::ConstantCurrent;
                 }
                 next
             }
@@ -243,19 +240,15 @@ impl Looper {
     }
 
     fn get_battery_status(file: &mut Option<File>, content: &mut String) -> io::Result<bool> {
-        if file.is_none() {
-            *file = Some(File::open(BATTERY_STATUS_PATH)?);
-        }
-
-        let result = match file.as_mut() {
-            Some(file) => file
-                .rewind()
-                .and_then(|()| {
-                    content.clear();
-                    file.read_to_string(content)
-                })
-                .map(|_| content.trim() == "Charging"),
-            None => unreachable!("battery status file is initialized above"),
+        let result = if let Some(file) = file.as_mut() {
+            Self::read_battery_status(file, content)
+        } else {
+            let mut new_file = File::open(BATTERY_STATUS_PATH)?;
+            let result = Self::read_battery_status(&mut new_file, content);
+            if result.is_ok() {
+                *file = Some(new_file);
+            }
+            result
         };
 
         if result.is_err() {
@@ -263,6 +256,13 @@ impl Looper {
         }
 
         result
+    }
+
+    fn read_battery_status(file: &mut File, content: &mut String) -> io::Result<bool> {
+        content.clear();
+        file.rewind()
+            .and_then(|()| file.read_to_string(content))
+            .map(|_| content.trim() == "Charging")
     }
 
     fn apply_ufcs_vote(vote: i32) -> Result<()> {
