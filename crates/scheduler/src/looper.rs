@@ -160,16 +160,15 @@ impl Looper {
             params.current_ma,
             over_voltage,
         );
-        if next == current {
-            self.session = Some(session);
-        } else {
+        if next != current {
             apply_vote(next)?;
             session.current_vote = next;
-            self.session = Some(session);
             if session.cut_off {
                 warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
             }
         }
+        self.session = Some(session);
+
         Ok(())
     }
 
