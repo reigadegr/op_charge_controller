@@ -69,8 +69,12 @@ pub struct BccParamsReader {
 
 impl BccParamsReader {
     pub fn new() -> io::Result<Self> {
+        Self::from_path(BCC_PARMS_PATH)
+    }
+
+    pub fn from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
         Ok(Self {
-            reader: SysfsReader::new(BCC_PARMS_PATH, 128)?,
+            reader: SysfsReader::new(path, 128)?,
         })
     }
 
@@ -107,8 +111,12 @@ pub struct ChargeTypeReader {
 
 impl ChargeTypeReader {
     pub fn new() -> io::Result<Self> {
+        Self::from_path(BATTERY_LOG_CONTENT_PATH)
+    }
+
+    pub fn from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
         Ok(Self {
-            reader: SysfsReader::new(BATTERY_LOG_CONTENT_PATH, 256)?,
+            reader: SysfsReader::new(path, 256)?,
         })
     }
 
@@ -124,8 +132,12 @@ pub struct BatteryCapacityReader {
 
 impl BatteryCapacityReader {
     pub fn new() -> io::Result<Self> {
+        Self::from_path(BATTERY_CAPACITY_PATH)
+    }
+
+    pub fn from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
         Ok(Self {
-            reader: SysfsReader::new(BATTERY_CAPACITY_PATH, 4)?,
+            reader: SysfsReader::new(path, 4)?,
         })
     }
 
@@ -160,103 +172,4 @@ where
                 format!("解析{name}字段失败: {error}"),
             )
         })
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::{env, fs, os::unix::fs::symlink, process};
-
-    #[test]
-    fn parses_bcc_params_battery_fields() -> io::Result<()> {
-        let params = parse_bcc_params("0,1,2,3,4,5,4400,7,-5000,9,10,4390\n")?;
-
-        assert_eq!(
-            params,
-            BccParams {
-                cell_voltage_1_mv: 4400.0,
-                cell_voltage_2_mv: 4390.0,
-                current_ma: -5000.0,
-            }
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_missing_bcc_params_fields() {
-        assert!(matches!(
-            parse_bcc_params("0,1,2"),
-            Err(error) if error.kind() == io::ErrorKind::InvalidData
-        ));
-    }
-
-    #[test]
-    fn rejects_non_finite_bcc_params_fields() {
-        assert!(matches!(
-            parse_bcc_params("0,1,2,3,4,5,NaN,7,-5000,9,10,4390"),
-            Err(error) if error.kind() == io::ErrorKind::InvalidData
-        ));
-        assert!(matches!(
-            parse_bcc_params("0,1,2,3,4,5,4400,7,inf,9,10,4390"),
-            Err(error) if error.kind() == io::ErrorKind::InvalidData
-        ));
-    }
-
-    #[test]
-    fn parses_charge_type_field() -> io::Result<()> {
-        assert_eq!(
-            parse_field::<u32>("0,1,2,3,4,5,6,7,8,15,10,11,5000\n", 9, "充电器类型")?,
-            15
-        );
-        assert_eq!(
-            parse_field::<u32>(" 0,1,2,3,4,5,6,7,8, 14 ,10,11\n", 9, "充电器类型")?,
-            14
-        );
-
-        Ok(())
-    }
-
-    #[test]
-    fn parses_battery_capacity() -> io::Result<()> {
-        assert_eq!(parse_battery_capacity("65\n")?, 65);
-        assert_eq!(parse_battery_capacity(" 2 ")?, 2);
-
-        Ok(())
-    }
-
-    #[test]
-    fn rejects_missing_charge_type_field() {
-        assert!(matches!(
-            parse_field::<u32>("0,1,2", 9, "充电器类型"),
-            Err(error) if error.kind() == io::ErrorKind::InvalidData
-        ));
-    }
-
-    #[test]
-    fn rejects_invalid_bcc_params_fields() {
-        assert!(matches!(
-            parse_bcc_params("0,1,2,3,4,5,invalid,7,-5000,9,10,4390"),
-            Err(error) if error.kind() == io::ErrorKind::InvalidData
-        ));
-    }
-
-    #[test]
-    fn sysfs_reader_reopens_after_read_failure() -> io::Result<()> {
-        let path = env::temp_dir().join(format!(
-            "op_charge_controller_{}_sysfs_reader",
-            process::id()
-        ));
-        let _ = fs::remove_file(&path);
-        symlink(env::temp_dir(), &path)?;
-        let mut reader = SysfsReader::new(&path, 16)?;
-
-        assert!(reader.read().is_err());
-        fs::remove_file(&path)?;
-        fs::write(&path, "first\n")?;
-        assert_eq!(reader.read()?, "first\n");
-        fs::write(&path, "second\n")?;
-        assert_eq!(reader.read()?, "second\n");
-        fs::remove_file(&path)
-    }
 }

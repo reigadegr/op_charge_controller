@@ -13,6 +13,8 @@ mod battery_display;
 
 use battery_display::{BatteryDisplay, apply_battery_display_action};
 
+pub use battery_display::BatteryDisplayAction;
+
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
@@ -57,7 +59,7 @@ impl Looper {
             match status_reader.read() {
                 Ok(content) => {
                     let charging = content.trim() == "Charging";
-                    let previous_charging = self.battery_display.handle(
+                    let previous_charging = self.handle_battery_display(
                         charging,
                         || capacity_reader.read(),
                         apply_battery_display_action,
@@ -77,7 +79,17 @@ impl Looper {
         }
     }
 
-    fn handle_battery_status(
+    pub fn handle_battery_display(
+        &mut self,
+        charging: bool,
+        read_capacity: impl FnOnce() -> io::Result<u8>,
+        apply_action: impl FnMut(BatteryDisplayAction) -> Result<()>,
+    ) -> Option<bool> {
+        self.battery_display
+            .handle(charging, read_capacity, apply_action)
+    }
+
+    pub fn handle_battery_status(
         &mut self,
         config: &Config,
         read_params: impl FnOnce() -> io::Result<BccParams>,
@@ -249,7 +261,3 @@ impl Default for Looper {
         Self::new()
     }
 }
-
-#[cfg(test)]
-#[path = "tests.rs"]
-mod tests;

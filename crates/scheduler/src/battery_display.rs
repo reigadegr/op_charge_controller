@@ -10,7 +10,7 @@ const BATTERY_LEVEL_LOCK_THRESHOLD: u8 = 3;
 const BATTERY_LOCKED_LEVEL: &str = "2";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum BatteryDisplayAction {
+pub enum BatteryDisplayAction {
     Reset,
     LockLowLevel,
 }
