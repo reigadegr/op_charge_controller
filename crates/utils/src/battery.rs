@@ -1,6 +1,7 @@
 use std::{
     fs::File,
     io::{self, Read, Seek},
+    path::PathBuf,
     str::FromStr,
 };
 
@@ -16,24 +17,48 @@ pub struct BccParams {
 }
 
 #[derive(Debug)]
-struct SysfsReader {
-    fd: File,
+pub struct SysfsReader {
+    path: PathBuf,
+    fd: Option<File>,
     content: String,
 }
 
 impl SysfsReader {
-    fn new(path: &str, capacity: usize) -> io::Result<Self> {
+    pub fn new(path: impl Into<PathBuf>, capacity: usize) -> io::Result<Self> {
+        let path = path.into();
+        let fd = File::open(&path)?;
+
         Ok(Self {
-            fd: File::open(path)?,
+            path,
+            fd: Some(fd),
             content: String::with_capacity(capacity),
         })
     }
 
-    fn read(&mut self) -> io::Result<&str> {
-        self.fd.rewind()?;
-        self.content.clear();
-        self.fd.read_to_string(&mut self.content)?;
-        Ok(&self.content)
+    pub fn read(&mut self) -> io::Result<&str> {
+        let result = if let Some(fd) = self.fd.as_mut() {
+            Self::read_fd(fd, &mut self.content)
+        } else {
+            let mut fd = File::open(&self.path)?;
+            let result = Self::read_fd(&mut fd, &mut self.content);
+            if result.is_ok() {
+                self.fd = Some(fd);
+            }
+            result
+        };
+
+        if result.is_err() {
+            self.fd = None;
+        }
+
+        result.map(|()| self.content.as_str())
+    }
+
+    fn read_fd(fd: &mut File, content: &mut String) -> io::Result<()> {
+        fd.rewind()?;
+        content.clear();
+        fd.read_to_string(content)?;
+        Ok(())
     }
 }
 
@@ -129,6 +154,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::{env, fs, os::unix::fs::symlink, process};
 
     #[test]
     fn parses_bcc_params_battery_fields() -> io::Result<()> {
@@ -190,5 +216,24 @@ mod tests {
             parse_bcc_params("0,1,2,3,4,5,invalid,7,-5000,9,10,4390"),
             Err(error) if error.kind() == io::ErrorKind::InvalidData
         ));
+    }
+
+    #[test]
+    fn sysfs_reader_reopens_after_read_failure() -> io::Result<()> {
+        let path = env::temp_dir().join(format!(
+            "op_charge_controller_{}_sysfs_reader",
+            process::id()
+        ));
+        let _ = fs::remove_file(&path);
+        symlink(env::temp_dir(), &path)?;
+        let mut reader = SysfsReader::new(&path, 16)?;
+
+        assert!(reader.read().is_err());
+        fs::remove_file(&path)?;
+        fs::write(&path, "first\n")?;
+        assert_eq!(reader.read()?, "first\n");
+        fs::write(&path, "second\n")?;
+        assert_eq!(reader.read()?, "second\n");
+        fs::remove_file(&path)
     }
 }

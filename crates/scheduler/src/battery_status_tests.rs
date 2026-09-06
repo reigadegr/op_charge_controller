@@ -40,34 +40,10 @@ fn a_new_session_restarts_from_initial_step() {
 fn repeated_not_charging_status_is_skipped() {
     let config = config();
     let mut looper = Looper::new();
-    let mut votes = Vec::new();
-    let first_previous = looper.battery_display.handle(false, || Ok(65), |_| Ok(()));
+    let params = params(4400.0, 4390.0);
 
-    looper.handle_battery_status(
-        &config,
-        || Ok(params(4400.0, 4390.0)),
-        || Ok(UFCS_CHARGE_TYPE),
-        |vote| {
-            votes.push(vote);
-            Ok(())
-        },
-        first_previous,
-        false,
-    );
-    let second_previous = looper.battery_display.handle(false, || Ok(65), |_| Ok(()));
-    looper.handle_battery_status(
-        &config,
-        || Ok(params(4400.0, 4390.0)),
-        || Ok(UFCS_CHARGE_TYPE),
-        |vote| {
-            votes.push(vote);
-            Ok(())
-        },
-        second_previous,
-        false,
-    );
-
-    assert!(votes.is_empty());
+    assert!(tick(&mut looper, &config, false, UFCS_CHARGE_TYPE, params).is_empty());
+    assert!(tick(&mut looper, &config, false, UFCS_CHARGE_TYPE, params).is_empty());
 }
 
 #[test]

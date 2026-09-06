@@ -29,7 +29,9 @@ impl AtomicConfig {
         let profile = profile_path();
         let raw_content = fs::read_to_string(&profile)?;
         let formatted_content = format_toml(&raw_content);
-        let _ = fs::write(&profile, formatted_content);
+        if formatted_content != raw_content {
+            let _ = fs::write(&profile, formatted_content);
+        }
 
         let config = toml::from_str(&raw_content)?;
 
@@ -41,6 +43,11 @@ impl AtomicConfig {
 
     pub fn get(&self) -> Guard<Arc<Config>> {
         self.inner.load()
+    }
+
+    #[must_use]
+    pub fn profile(&self) -> &str {
+        &self.profile
     }
 
     pub fn reload(&self) {

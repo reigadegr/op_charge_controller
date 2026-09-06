@@ -7,7 +7,7 @@ use anyhow::{Context, Result};
 use tracing::{error, info, warn};
 
 const BATTERY_LEVEL_LOCK_THRESHOLD: u8 = 3;
-const BATTERY_LOCKED_LEVEL: u8 = 2;
+const BATTERY_LOCKED_LEVEL: &str = "2";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum BatteryDisplayAction {
@@ -72,7 +72,7 @@ impl BatteryDisplay {
 pub(super) fn apply_battery_display_action(action: BatteryDisplayAction) -> Result<()> {
     let args: &[&str] = match action {
         BatteryDisplayAction::Reset => &["battery", "reset"],
-        BatteryDisplayAction::LockLowLevel => &["battery", "set", "level", "2"],
+        BatteryDisplayAction::LockLowLevel => &["battery", "set", "level", BATTERY_LOCKED_LEVEL],
     };
     let status = Command::new("/system/bin/dumpsys")
         .args(args)

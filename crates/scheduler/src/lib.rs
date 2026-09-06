@@ -5,7 +5,7 @@ mod taper;
 use std::{sync::Arc, thread, time::Duration};
 
 use anyhow::Result;
-use config::{AtomicConfig, profile_path};
+use config::AtomicConfig;
 use inotify::{Inotify, WatchMask};
 use looper::Looper;
 use tracing::{error, info};
@@ -25,7 +25,7 @@ impl Scheduler {
         let config = Arc::clone(&self.atomic_config);
 
         std::thread::spawn(move || {
-            let config_path = profile_path();
+            let config_path = config.profile();
             let mut inotify = match Inotify::init() {
                 Ok(i) => i,
                 Err(e) => {

@@ -1,17 +1,12 @@
-use std::{
-    fs::File,
-    io::{self, Read, Seek},
-    path::Path,
-    sync::Arc,
-    thread,
-    time::Duration,
-};
+use std::{io, path::Path, sync::Arc, thread, time::Duration};
 
 use crate::{ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use tracing::{error, info, warn};
-use utils::{BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, mask_val};
+use utils::{
+    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, mask_val,
+};
 
 #[path = "battery_display.rs"]
 mod battery_display;
@@ -57,11 +52,11 @@ impl Looper {
         let mut reader = BccParamsReader::new()?;
         let mut charge_type_reader = ChargeTypeReader::new()?;
         let mut capacity_reader = BatteryCapacityReader::new()?;
-        let mut status_file = None;
-        let mut status_content = String::with_capacity(16);
+        let mut status_reader = SysfsReader::new(BATTERY_STATUS_PATH, 16)?;
         loop {
-            match Self::get_battery_status(&mut status_file, &mut status_content) {
-                Ok(charging) => {
+            match status_reader.read() {
+                Ok(content) => {
+                    let charging = content.trim() == "Charging";
                     let previous_charging = self.battery_display.handle(
                         charging,
                         || capacity_reader.read(),
@@ -237,32 +232,6 @@ impl Looper {
                 next
             }
         }
-    }
-
-    fn get_battery_status(file: &mut Option<File>, content: &mut String) -> io::Result<bool> {
-        let result = if let Some(file) = file.as_mut() {
-            Self::read_battery_status(file, content)
-        } else {
-            let mut new_file = File::open(BATTERY_STATUS_PATH)?;
-            let result = Self::read_battery_status(&mut new_file, content);
-            if result.is_ok() {
-                *file = Some(new_file);
-            }
-            result
-        };
-
-        if result.is_err() {
-            *file = None;
-        }
-
-        result
-    }
-
-    fn read_battery_status(file: &mut File, content: &mut String) -> io::Result<bool> {
-        content.clear();
-        file.rewind()
-            .and_then(|()| file.read_to_string(content))
-            .map(|_| content.trim() == "Charging")
     }
 
     fn apply_ufcs_vote(vote: i32) -> Result<()> {
