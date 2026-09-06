@@ -58,23 +58,19 @@ impl Looper {
         is_charging: bool,
     ) {
         let previously_charging = self.was_charging.replace(is_charging);
-        if let Some(previously_charging) = previously_charging
-            && previously_charging != is_charging
-        {
-            let message = if is_charging {
-                "进入充电"
-            } else {
-                "退出充电"
-            };
-            info!("{message}");
+        if previously_charging.is_some_and(|was_charging| was_charging != is_charging) {
+            info!(
+                "{}",
+                if is_charging {
+                    "进入充电"
+                } else {
+                    "退出充电"
+                }
+            );
         }
 
         if is_charging && previously_charging != Some(true) {
-            self.cut_off = false;
-            self.current_vote = None;
-            self.locked_step_ma = None;
-            self.constant_current = false;
-            self.constant_voltage = false;
+            self.reset_session();
         }
 
         if is_charging {
@@ -139,25 +135,13 @@ impl Looper {
             );
         }
 
-        let next_vote = if self.cut_off {
-            0
-        } else if over_constant_voltage {
-            current_vote.saturating_sub_unsigned(step_ma).max(0)
-        } else if just_started || self.constant_current || self.constant_voltage {
-            current_vote
-        } else {
-            let stepped = current_vote.saturating_add_unsigned(step_ma);
-            if stepped > config.ufcs_max_vote {
-                self.constant_current = true;
-                info!(
-                    current_vote_ma = current_vote,
-                    "升流已达上限，进入恒流充电阶段"
-                );
-                current_vote
-            } else {
-                stepped
-            }
-        };
+        let next_vote = self.next_vote(
+            current_vote,
+            step_ma,
+            config.ufcs_max_vote,
+            just_started,
+            over_constant_voltage,
+        );
         if next_vote != current_vote {
             apply_vote(next_vote)?;
             self.current_vote = Some(next_vote);
@@ -167,6 +151,45 @@ impl Looper {
         }
 
         Ok(())
+    }
+
+    const fn reset_session(&mut self) {
+        self.cut_off = false;
+        self.current_vote = None;
+        self.locked_step_ma = None;
+        self.constant_current = false;
+        self.constant_voltage = false;
+    }
+
+    fn next_vote(
+        &mut self,
+        current_vote: i32,
+        step_ma: u32,
+        max_vote: i32,
+        just_started: bool,
+        over_constant_voltage: bool,
+    ) -> i32 {
+        if self.cut_off {
+            return 0;
+        }
+        if over_constant_voltage {
+            return current_vote.saturating_sub_unsigned(step_ma).max(0);
+        }
+        if just_started || self.constant_current || self.constant_voltage {
+            return current_vote;
+        }
+
+        let stepped = current_vote.saturating_add_unsigned(step_ma);
+        if stepped > max_vote {
+            self.constant_current = true;
+            info!(
+                current_vote_ma = current_vote,
+                "升流已达上限，进入恒流充电阶段"
+            );
+            current_vote
+        } else {
+            stepped
+        }
     }
 
     fn get_battery_status() -> Result<bool> {
