@@ -16,6 +16,7 @@ pub struct Looper {
     locked_step_ma: Option<u32>,
     cut_off: bool,
     constant_current: bool,
+    constant_voltage: bool,
 }
 
 impl Looper {
@@ -27,6 +28,7 @@ impl Looper {
             locked_step_ma: None,
             cut_off: false,
             constant_current: false,
+            constant_voltage: false,
         }
     }
 
@@ -72,6 +74,7 @@ impl Looper {
             self.current_vote = None;
             self.locked_step_ma = None;
             self.constant_current = false;
+            self.constant_voltage = false;
         }
 
         if is_charging {
@@ -125,9 +128,22 @@ impl Looper {
             self.cut_off = true;
         }
 
+        let constant_voltage_mv = f64::from(config.constant_voltage_mv);
+        let over_constant_voltage = params.cell_voltage_1_mv >= constant_voltage_mv
+            || params.cell_voltage_2_mv >= constant_voltage_mv;
+        if over_constant_voltage && !self.constant_voltage {
+            self.constant_voltage = true;
+            info!(
+                constant_voltage_mv = config.constant_voltage_mv,
+                "电芯电压达到恒压阈值，进入恒压降流阶段"
+            );
+        }
+
         let next_vote = if self.cut_off {
             0
-        } else if just_started || self.constant_current {
+        } else if over_constant_voltage {
+            current_vote.saturating_sub_unsigned(step_ma).max(0)
+        } else if just_started || self.constant_current || self.constant_voltage {
             current_vote
         } else {
             let stepped = current_vote.saturating_add_unsigned(step_ma);
@@ -183,23 +199,33 @@ mod tests {
         Config {
             ufcs_max_vote: 5000,
             ufcs_step_ma: 100,
+            constant_voltage_mv: 4500,
             charge_cutoff_mv: 4570,
         }
     }
 
     const fn params(voltage: f64) -> BccParams {
+        cell_params(voltage, 4390.0)
+    }
+
+    const fn cell_params(cell_voltage_1_mv: f64, cell_voltage_2_mv: f64) -> BccParams {
         BccParams {
-            cell_voltage_1_mv: voltage,
-            cell_voltage_2_mv: 4390.0,
+            cell_voltage_1_mv,
+            cell_voltage_2_mv,
             current_ma: -100.0,
         }
     }
 
-    fn tick(looper: &mut Looper, config: &Config, charging: bool, voltage: f64) -> Vec<i32> {
+    fn tick_params(
+        looper: &mut Looper,
+        config: &Config,
+        charging: bool,
+        params: BccParams,
+    ) -> Vec<i32> {
         let mut votes = Vec::new();
         looper.handle_battery_status(
             config,
-            || Ok(params(voltage)),
+            || Ok(params),
             |vote| {
                 votes.push(vote);
                 Ok(())
@@ -207,6 +233,10 @@ mod tests {
             charging,
         );
         votes
+    }
+
+    fn tick(looper: &mut Looper, config: &Config, charging: bool, voltage: f64) -> Vec<i32> {
+        tick_params(looper, config, charging, params(voltage))
     }
 
     #[test]
@@ -317,6 +347,67 @@ mod tests {
         }
         assert!(tick(&mut looper, &config, false, 4400.0).is_empty());
         assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
+    }
+
+    #[test]
+    fn steps_down_at_the_constant_voltage_and_then_holds_the_current() {
+        let config = Config {
+            ufcs_max_vote: 350,
+            ..config()
+        };
+        let mut looper = Looper::new();
+
+        for expected_vote in [100, 200, 300] {
+            assert_eq!(tick(&mut looper, &config, true, 4400.0), [expected_vote]);
+        }
+        assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
+
+        assert_eq!(
+            tick_params(&mut looper, &config, true, cell_params(4400.0, 4500.0)),
+            [200]
+        );
+        assert_eq!(
+            tick_params(&mut looper, &config, true, cell_params(4501.0, 4390.0)),
+            [100]
+        );
+
+        for _ in 0..3 {
+            assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
+        }
+    }
+
+    #[test]
+    fn clamps_the_stepped_down_vote_at_zero() {
+        let config = Config {
+            ufcs_max_vote: 1000,
+            ufcs_step_ma: 5000,
+            ..config()
+        };
+        let mut looper = Looper::new();
+
+        assert_eq!(
+            tick_params(&mut looper, &config, true, cell_params(4400.0, 4500.0)),
+            [1000, 0]
+        );
+        assert!(tick_params(&mut looper, &config, true, cell_params(4400.0, 4500.0)).is_empty());
+    }
+
+    #[test]
+    fn ramps_again_after_a_new_session_that_follows_constant_voltage() {
+        let config = config();
+        let mut looper = Looper::new();
+
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [200]);
+        assert_eq!(
+            tick_params(&mut looper, &config, true, cell_params(4400.0, 4500.0)),
+            [100]
+        );
+        assert!(tick(&mut looper, &config, true, 4400.0).is_empty());
+
+        assert!(tick(&mut looper, &config, false, 4400.0).is_empty());
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [100]);
+        assert_eq!(tick(&mut looper, &config, true, 4400.0), [200]);
     }
 
     #[test]

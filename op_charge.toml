@@ -1,3 +1,4 @@
 ufcs_max_vote = 5000
 ufcs_step_ma = 100
+constant_voltage_mv = 4500
 charge_cutoff_mv = 4570
