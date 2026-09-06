@@ -15,37 +15,40 @@ pub struct BccParams {
 #[derive(Debug)]
 pub struct BccParamsReader {
     fd: File,
+    content: String,
 }
 
 impl BccParamsReader {
     pub fn new() -> io::Result<Self> {
         Ok(Self {
             fd: File::open(BCC_PARMS_PATH)?,
+            content: String::with_capacity(128),
         })
     }
 
     pub fn read(&mut self) -> io::Result<BccParams> {
         self.fd.rewind()?;
 
-        let mut content = String::new();
-        self.fd.read_to_string(&mut content)?;
-        parse_bcc_params(&content)
+        self.content.clear();
+        self.fd.read_to_string(&mut self.content)?;
+        parse_bcc_params(&self.content)
     }
 }
 
 fn parse_bcc_params(content: &str) -> io::Result<BccParams> {
-    let fields: Vec<_> = content.trim().split(',').collect();
+    let content = content.trim();
 
     Ok(BccParams {
-        cell_voltage_1_mv: parse_bcc_field(&fields, 6, "第一电芯电压")?,
-        current_ma: parse_bcc_field(&fields, 8, "电流")?,
-        cell_voltage_2_mv: parse_bcc_field(&fields, 11, "第二电芯电压")?,
+        cell_voltage_1_mv: parse_bcc_field(content, 6, "第一电芯电压")?,
+        current_ma: parse_bcc_field(content, 8, "电流")?,
+        cell_voltage_2_mv: parse_bcc_field(content, 11, "第二电芯电压")?,
     })
 }
 
-fn parse_bcc_field(fields: &[&str], index: usize, name: &str) -> io::Result<f64> {
-    fields
-        .get(index)
+fn parse_bcc_field(content: &str, index: usize, name: &str) -> io::Result<f64> {
+    content
+        .split(',')
+        .nth(index)
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, format!("缺少{name}字段")))?
         .trim()
         .parse()

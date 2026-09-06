@@ -1,4 +1,11 @@
-use std::{fs, io, path::Path, sync::Arc, thread, time::Duration};
+use std::{
+    fs::File,
+    io::{self, Read, Seek},
+    path::Path,
+    sync::Arc,
+    thread,
+    time::Duration,
+};
 
 use crate::{constant_current, ramp_up, taper};
 use anyhow::{Context, Result};
@@ -35,8 +42,10 @@ impl Looper {
 
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let mut reader = BccParamsReader::new()?;
+        let mut status_file = None;
+        let mut status_content = String::with_capacity(16);
         loop {
-            match Self::get_battery_status() {
+            match Self::get_battery_status(&mut status_file, &mut status_content) {
                 Ok(charging) => {
                     self.handle_battery_status(
                         &config_manager.get(),
@@ -184,8 +193,27 @@ impl Looper {
         next
     }
 
-    fn get_battery_status() -> Result<bool> {
-        Ok(fs::read_to_string(BATTERY_STATUS_PATH)?.trim() == "Charging")
+    fn get_battery_status(file: &mut Option<File>, content: &mut String) -> io::Result<bool> {
+        if file.is_none() {
+            *file = Some(File::open(BATTERY_STATUS_PATH)?);
+        }
+
+        let result = match file.as_mut() {
+            Some(file) => file
+                .rewind()
+                .and_then(|()| {
+                    content.clear();
+                    file.read_to_string(content)
+                })
+                .map(|_| content.trim() == "Charging"),
+            None => unreachable!("battery status file is initialized above"),
+        };
+
+        if result.is_err() {
+            *file = None;
+        }
+
+        result
     }
 
     fn apply_ufcs_vote(vote: i32) -> Result<()> {
