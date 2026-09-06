@@ -4,6 +4,7 @@ use std::{
 };
 
 const BCC_PARMS_PATH: &str = "/sys/class/oplus_chg/battery/bcc_parms";
+const BATTERY_LOG_CONTENT_PATH: &str = "/sys/class/oplus_chg/battery/battery_log_content";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BccParams {
@@ -45,6 +46,45 @@ fn parse_bcc_params(content: &str) -> io::Result<BccParams> {
     })
 }
 
+fn parse_charge_type(content: &str) -> io::Result<u32> {
+    content
+        .trim()
+        .split(',')
+        .nth(9)
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "缺少充电器类型字段"))?
+        .trim()
+        .parse()
+        .map_err(|error| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("解析充电器类型字段失败: {error}"),
+            )
+        })
+}
+
+#[derive(Debug)]
+pub struct ChargeTypeReader {
+    fd: File,
+    content: String,
+}
+
+impl ChargeTypeReader {
+    pub fn new() -> io::Result<Self> {
+        Ok(Self {
+            fd: File::open(BATTERY_LOG_CONTENT_PATH)?,
+            content: String::with_capacity(256),
+        })
+    }
+
+    pub fn read(&mut self) -> io::Result<u32> {
+        self.fd.rewind()?;
+
+        self.content.clear();
+        self.fd.read_to_string(&mut self.content)?;
+        parse_charge_type(&self.content)
+    }
+}
+
 fn parse_bcc_field(content: &str, index: usize, name: &str) -> io::Result<f64> {
     content
         .split(',')
@@ -84,6 +124,22 @@ mod tests {
     fn rejects_missing_bcc_params_fields() {
         assert!(matches!(
             parse_bcc_params("0,1,2"),
+            Err(error) if error.kind() == io::ErrorKind::InvalidData
+        ));
+    }
+
+    #[test]
+    fn parses_charge_type_field() -> io::Result<()> {
+        assert_eq!(parse_charge_type("0,1,2,3,4,5,6,7,8,15,10,11,5000\n")?, 15);
+        assert_eq!(parse_charge_type(" 0,1,2,3,4,5,6,7,8, 14 ,10,11\n")?, 14);
+
+        Ok(())
+    }
+
+    #[test]
+    fn rejects_missing_charge_type_field() {
+        assert!(matches!(
+            parse_charge_type("0,1,2"),
             Err(error) if error.kind() == io::ErrorKind::InvalidData
         ));
     }

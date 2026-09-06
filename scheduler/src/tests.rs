@@ -18,11 +18,18 @@ fn params(v1: f64, v2: f64) -> BccParams {
     }
 }
 
-fn tick(looper: &mut Looper, config: &Config, charging: bool, p: BccParams) -> Vec<i32> {
+fn tick(
+    looper: &mut Looper,
+    config: &Config,
+    charging: bool,
+    charge_type: u32,
+    p: BccParams,
+) -> Vec<i32> {
     let mut votes = Vec::new();
     looper.handle_battery_status(
         config,
         || Ok(p),
+        || Ok(charge_type),
         |vote| {
             votes.push(vote);
             Ok(())
@@ -40,18 +47,45 @@ fn ramps_by_one_locked_step_and_enters_constant_current_at_cap() {
     };
     let mut looper = Looper::new();
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [100]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [200]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [250]
     );
-    assert!(tick(&mut looper, &config, true, params(4400.0, 4390.0)).is_empty());
+    assert!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -59,14 +93,35 @@ fn cutoff_and_constant_voltage_reduce_current() {
     let config = config();
     let mut looper = Looper::new();
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [100]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4500.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4500.0)
+        ),
         [0]
     );
-    assert!(tick(&mut looper, &config, true, params(4570.0, 4390.0)).is_empty());
+    assert!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4570.0, 4390.0)
+        )
+        .is_empty()
+    );
 }
 
 #[test]
@@ -76,11 +131,18 @@ fn failed_vote_is_retried_without_advancing_state() {
     looper.handle_battery_status(
         &config,
         || Ok(params(4400.0, 4390.0)),
+        || Ok(UFCS_CHARGE_TYPE),
         |_| anyhow::bail!("failed"),
         true,
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [100]
     );
 }
@@ -94,19 +156,43 @@ fn ramp_and_taper_use_their_own_steps() {
     };
     let mut looper = Looper::new();
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [200]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [400]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4500.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4500.0, 4390.0)
+        ),
         [350]
     );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4500.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4500.0, 4390.0)
+        ),
         [300]
     );
 }
@@ -116,12 +202,33 @@ fn a_new_session_restarts_from_initial_step() {
     let config = config();
     let mut looper = Looper::new();
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [100]
     );
-    assert!(tick(&mut looper, &config, false, params(4400.0, 4390.0)).is_empty());
+    assert!(
+        tick(
+            &mut looper,
+            &config,
+            false,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        )
+        .is_empty()
+    );
     assert_eq!(
-        tick(&mut looper, &config, true, params(4400.0, 4390.0)),
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
         [100]
     );
 }
@@ -133,11 +240,63 @@ fn repeated_not_charging_status_is_skipped() {
     let read_params = || Ok(params(4400.0, 4390.0));
     let apply_vote = |_| Ok(());
 
-    assert!(looper.handle_battery_status(&config, read_params, apply_vote, false,));
+    assert!(looper.handle_battery_status(
+        &config,
+        read_params,
+        || Ok(UFCS_CHARGE_TYPE),
+        apply_vote,
+        false,
+    ));
     assert!(!looper.handle_battery_status(
         &config,
         || Ok(params(4400.0, 4390.0)),
+        || Ok(UFCS_CHARGE_TYPE),
         |_| Ok(()),
         false,
     ));
+}
+
+#[test]
+fn non_ufcs_charger_skips_control() {
+    let config = config();
+    let mut looper = Looper::new();
+    assert!(tick(&mut looper, &config, true, 14, params(4400.0, 4390.0)).is_empty());
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [100]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [200]
+    );
+}
+
+#[test]
+fn charge_type_read_failure_skips_control() {
+    let config = config();
+    let mut looper = Looper::new();
+    let mut votes = Vec::new();
+    looper.handle_battery_status(
+        &config,
+        || Ok(params(4400.0, 4390.0)),
+        || Err(io::Error::new(io::ErrorKind::InvalidData, "读取失败")),
+        |vote| {
+            votes.push(vote);
+            Ok(())
+        },
+        true,
+    );
+    assert!(votes.is_empty());
 }

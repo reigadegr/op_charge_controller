@@ -11,12 +11,13 @@ use crate::{constant_current, ramp_up, taper};
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
 use tracing::{error, info, warn};
-use utils::{BccParams, BccParamsReader, mask_val};
+use utils::{BccParams, BccParamsReader, ChargeTypeReader, mask_val};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
+const UFCS_CHARGE_TYPE: u32 = 15;
 
 pub struct Looper {
     was_charging: Option<bool>,
@@ -42,6 +43,7 @@ impl Looper {
 
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let mut reader = BccParamsReader::new()?;
+        let mut charge_type_reader = ChargeTypeReader::new()?;
         let mut status_file = None;
         let mut status_content = String::with_capacity(16);
         loop {
@@ -50,6 +52,7 @@ impl Looper {
                     self.handle_battery_status(
                         &config_manager.get(),
                         || reader.read(),
+                        || charge_type_reader.read(),
                         Self::apply_ufcs_vote,
                         charging,
                     );
@@ -64,6 +67,7 @@ impl Looper {
         &mut self,
         config: &Config,
         read_params: impl FnOnce() -> io::Result<BccParams>,
+        read_charge_type: impl FnOnce() -> io::Result<u32>,
         apply_vote: impl FnMut(i32) -> Result<()>,
         charging: bool,
     ) -> bool {
@@ -81,10 +85,24 @@ impl Looper {
                 }
             );
         }
-        if charging && previous != Some(true) {
+        let ufcs = charging
+            && match read_charge_type() {
+                Ok(charge_type) if charge_type == UFCS_CHARGE_TYPE => true,
+                Ok(charge_type) => {
+                    if previous != Some(true) {
+                        info!(charge_type, "充电器类型非 UFCS，跳过充电控制");
+                    }
+                    false
+                }
+                Err(error) => {
+                    error!("读取充电器类型失败: {error}");
+                    false
+                }
+            };
+        if ufcs && previous != Some(true) {
             self.reset_session();
         }
-        if charging {
+        if ufcs {
             let _ = self
                 .handle_charge_data(config, read_params, apply_vote)
                 .inspect_err(|error| error!("处理充电数据失败: {error:#}"));
