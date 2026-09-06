@@ -11,10 +11,14 @@ fn config() -> Config {
 }
 
 fn params(v1: f64, v2: f64) -> BccParams {
+    params_with_current(v1, v2, -100.0)
+}
+
+fn params_with_current(v1: f64, v2: f64, current_ma: f64) -> BccParams {
     BccParams {
         cell_voltage_1_mv: v1,
         cell_voltage_2_mv: v2,
-        current_ma: -100.0,
+        current_ma,
     }
 }
 
@@ -108,7 +112,17 @@ fn cutoff_and_constant_voltage_reduce_current() {
             &config,
             true,
             UFCS_CHARGE_TYPE,
-            params(4400.0, 4500.0)
+            params_with_current(4400.0, 4500.0, -180.0)
+        ),
+        [80]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4570.0, 4390.0)
         ),
         [0]
     );
@@ -181,9 +195,9 @@ fn ramp_and_taper_use_their_own_steps() {
             &config,
             true,
             UFCS_CHARGE_TYPE,
-            params(4500.0, 4390.0)
+            params_with_current(4500.0, 4390.0, -380.0)
         ),
-        [350]
+        [330]
     );
     assert_eq!(
         tick(
@@ -191,9 +205,75 @@ fn ramp_and_taper_use_their_own_steps() {
             &config,
             true,
             UFCS_CHARGE_TYPE,
-            params(4500.0, 4390.0)
+            params_with_current(4500.0, 4390.0, -300.0)
         ),
-        [300]
+        [250]
+    );
+    assert!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        )
+        .is_empty()
+    );
+}
+
+#[test]
+fn taper_uses_last_recorded_current_and_floors_at_zero() {
+    let config = config();
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params(4400.0, 4390.0)
+        ),
+        [100]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params_with_current(4500.0, 4390.0, 320.0)
+        ),
+        [220]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params_with_current(4500.0, 4390.0, -180.0)
+        ),
+        [80]
+    );
+    assert_eq!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params_with_current(4500.0, 4390.0, 30.0)
+        ),
+        [0]
+    );
+    assert!(
+        tick(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            params_with_current(4500.0, 4390.0, 30.0)
+        )
+        .is_empty()
     );
 }
 

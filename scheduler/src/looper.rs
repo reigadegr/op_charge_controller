@@ -131,6 +131,7 @@ impl Looper {
             current,
             ramp_step,
             first_sample,
+            params.current_ma,
             Self::over_constant_voltage(config, &params),
         );
         if next != current {
@@ -192,13 +193,14 @@ impl Looper {
         current: i32,
         ramp_step: u32,
         first_sample: bool,
+        measured_current_ma: f64,
         over_voltage: bool,
     ) -> i32 {
         if self.cut_off {
             return 0;
         }
         if over_voltage {
-            return taper::next(current, config);
+            return taper::next(measured_current_ma, config);
         }
         if first_sample || self.constant_voltage {
             return current;

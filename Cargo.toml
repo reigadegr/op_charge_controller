@@ -34,6 +34,7 @@ missing_errors_doc = "allow"
 missing_safety_doc = "allow"
 missing_panics_doc = "allow"
 cast_precision_loss = "allow"
+cast_possible_truncation = "allow"
 struct_excessive_bools = "allow"
 option_if_let_else = "allow"
 
