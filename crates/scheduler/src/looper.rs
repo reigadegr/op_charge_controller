@@ -5,7 +5,7 @@ use config::{AtomicConfig, Config};
 use dumpsys_rs::Dumpsys;
 use tracing::{error, info, warn};
 use utils::{
-    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, write_val,
+    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, mask_val,
 };
 
 use crate::{ramp_up, taper};
@@ -258,9 +258,9 @@ impl Looper {
     }
 
     fn apply_ufcs_vote(vote: i32) -> Result<()> {
-        write_val(&vote.to_string(), Path::new(UFCS_FORCE_VAL_PATH))
+        mask_val(&vote.to_string(), Path::new(UFCS_FORCE_VAL_PATH))
             .context("设置 UFCS 电流失败")?;
-        write_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("启用 UFCS 强制投票失败")?;
+        mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("启用 UFCS 强制投票失败")?;
         info!(current_vote_ma = vote, "UFCS 电流已锁定");
         Ok(())
     }

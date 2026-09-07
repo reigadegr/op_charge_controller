@@ -8,11 +8,8 @@ use std::{
 
 use rustix::{
     fs::{Gid, Mode, Uid, chmod, chown},
-    io::Errno,
     mount::{UnmountFlags, mount_bind, unmount},
 };
-
-const MAX_MOUNT_DEPTH: usize = 64;
 
 static MASKS_DIR: LazyLock<io::Result<PathBuf>> = LazyLock::new(|| masks_dir(&env::current_exe()?));
 
@@ -30,7 +27,7 @@ pub fn lock_val(value: &str, path: &Path) -> io::Result<()> {
 }
 
 fn lock_value(file: &Path, value: &str) -> io::Result<()> {
-    unmount_all(file)?;
+    let _ = unmount(file, UnmountFlags::empty());
     chown(file, Some(Uid::ROOT), Some(Gid::ROOT))?;
     chmod(file, Mode::from_raw_mode(0o644))?;
     fs::write(file, value)?;
@@ -63,31 +60,6 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
         .status();
 
     Ok(())
-}
-
-pub fn write_val(value: &str, path: &Path) -> io::Result<()> {
-    let file = path.canonicalize()?;
-    unmount_all(&file)?;
-    fs::write(file, format!("{value}\n"))
-}
-
-fn unmount_all(file: &Path) -> io::Result<()> {
-    let mut depth = 0;
-    loop {
-        match unmount(file, UnmountFlags::empty()) {
-            Ok(()) => {
-                depth += 1;
-                if depth > MAX_MOUNT_DEPTH {
-                    return Err(io::Error::other(format!(
-                        "目标挂载层数超过 {MAX_MOUNT_DEPTH}"
-                    )));
-                }
-            }
-            // EINVAL means the canonical path is no longer a mount point.
-            Err(error) if error == Errno::INVAL => return Ok(()),
-            Err(error) => return Err(error.into()),
-        }
-    }
 }
 
 pub fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
