@@ -21,6 +21,9 @@ const BATTERY_STATUS_PATH: &str =
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
 const UFCS_CHARGE_TYPE: u32 = 15;
+const UNSET_CHARGE_TYPE: u32 = 0;
+const CHARGE_TYPE_RETRY_COUNT: usize = 3;
+const CHARGE_TYPE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
 #[derive(Clone, Copy, Eq, PartialEq)]
 enum ChargePhase {
@@ -100,7 +103,7 @@ impl Looper {
         &mut self,
         config: &Config,
         read_params: impl FnOnce() -> io::Result<BccParams>,
-        read_charge_type: impl FnOnce() -> io::Result<u32>,
+        read_charge_type: impl FnMut() -> io::Result<u32>,
         apply_vote: impl FnMut(i32) -> Result<()>,
         previous: Option<bool>,
         charging: bool,
@@ -119,7 +122,7 @@ impl Looper {
             );
         }
         let ufcs = charging
-            && match read_charge_type() {
+            && match Self::read_charge_type(read_charge_type, previous != Some(true)) {
                 Ok(charge_type) if charge_type == UFCS_CHARGE_TYPE => true,
                 Ok(charge_type) => {
                     if previous != Some(true) {
@@ -260,10 +263,102 @@ impl Looper {
         info!(current_vote_ma = vote, "UFCS 电流已锁定");
         Ok(())
     }
+
+    fn read_charge_type(
+        read_charge_type: impl FnMut() -> io::Result<u32>,
+        retry_on_unset_charge_type: bool,
+    ) -> io::Result<u32> {
+        Self::read_charge_type_with_retry(
+            read_charge_type,
+            thread::sleep,
+            retry_on_unset_charge_type,
+        )
+    }
+
+    fn read_charge_type_with_retry(
+        mut read_charge_type: impl FnMut() -> io::Result<u32>,
+        mut sleep: impl FnMut(Duration),
+        retry_on_unset_charge_type: bool,
+    ) -> io::Result<u32> {
+        if !retry_on_unset_charge_type {
+            return read_charge_type();
+        }
+
+        let mut charge_type = read_charge_type()?;
+        for _ in 0..CHARGE_TYPE_RETRY_COUNT {
+            if charge_type != UNSET_CHARGE_TYPE {
+                return Ok(charge_type);
+            }
+            sleep(CHARGE_TYPE_RETRY_INTERVAL);
+            charge_type = read_charge_type()?;
+        }
+
+        Ok(charge_type)
+    }
 }
 
 impl Default for Looper {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn read_with_values(
+        values: &[u32],
+        retry_on_unset_charge_type: bool,
+    ) -> (io::Result<u32>, usize, Vec<Duration>) {
+        let mut values = values.iter().copied();
+        let mut reads = 0;
+        let mut sleeps = Vec::new();
+
+        let charge_type = Looper::read_charge_type_with_retry(
+            || {
+                reads += 1;
+                values
+                    .next()
+                    .ok_or_else(|| io::Error::other("unexpected charge type read"))
+            },
+            |interval| sleeps.push(interval),
+            retry_on_unset_charge_type,
+        );
+
+        (charge_type, reads, sleeps)
+    }
+
+    #[test]
+    fn unset_charge_type_is_reread_until_valid() {
+        let (charge_type, reads, sleeps) = read_with_values(&[0, 0, 15], true);
+
+        assert!(matches!(charge_type, Ok(15)));
+        assert_eq!(reads, 3);
+        assert_eq!(
+            sleeps,
+            vec![CHARGE_TYPE_RETRY_INTERVAL, CHARGE_TYPE_RETRY_INTERVAL]
+        );
+    }
+
+    #[test]
+    fn unset_charge_type_is_reread_at_most_three_times() {
+        let (charge_type, reads, sleeps) = read_with_values(&[0, 0, 0, 0], true);
+
+        assert!(matches!(charge_type, Ok(0)));
+        assert_eq!(reads, 4);
+        assert_eq!(
+            sleeps,
+            vec![CHARGE_TYPE_RETRY_INTERVAL; CHARGE_TYPE_RETRY_COUNT]
+        );
+    }
+
+    #[test]
+    fn unset_charge_type_is_not_retried_after_charging_is_established() {
+        let (charge_type, reads, sleeps) = read_with_values(&[0], false);
+
+        assert!(matches!(charge_type, Ok(0)));
+        assert_eq!(reads, 1);
+        assert!(sleeps.is_empty());
     }
 }
