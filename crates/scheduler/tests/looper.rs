@@ -408,3 +408,40 @@ fn failed_display_reset_is_retried_while_charging() {
         [BatteryDisplayAction::Reset, BatteryDisplayAction::Reset]
     );
 }
+
+fn count_charge_type_reads(values: &[u32], previous_charging: Option<bool>) -> usize {
+    let mut values = values.iter().copied();
+    let mut reads = 0;
+    let mut looper = Looper::new();
+
+    looper.handle_battery_status(
+        &config(),
+        || Ok(normal_params()),
+        || {
+            reads += 1;
+            values
+                .next()
+                .ok_or_else(|| io::Error::other("unexpected charge type read"))
+        },
+        |_| Ok(()),
+        previous_charging,
+        true,
+    );
+
+    reads
+}
+
+#[test]
+fn unset_charge_type_is_reread_until_valid() {
+    assert_eq!(count_charge_type_reads(&[0, 0, 15], None), 3);
+}
+
+#[test]
+fn unset_charge_type_is_reread_at_most_three_times() {
+    assert_eq!(count_charge_type_reads(&[0, 0, 0, 0], None), 4);
+}
+
+#[test]
+fn unset_charge_type_is_not_retried_after_charging_is_established() {
+    assert_eq!(count_charge_type_reads(&[0], Some(true)), 1);
+}
