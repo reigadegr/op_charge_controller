@@ -212,7 +212,8 @@ impl Looper {
         params: &BccParams,
         over_voltage: bool,
     ) {
-        session.cut_off |= params.cell_voltage_1_mv >= f64::from(config.charge_cutoff_mv);
+        session.cut_off |= params.cell_voltage_1_mv >= f64::from(config.charge_cutoff_mv)
+            || params.cell_voltage_2_mv >= f64::from(config.charge_cutoff_mv);
         if over_voltage && session.phase != ChargePhase::ConstantVoltage {
             session.phase = ChargePhase::ConstantVoltage;
             info!(

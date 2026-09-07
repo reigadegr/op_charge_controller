@@ -150,6 +150,29 @@ fn cutoff_and_constant_voltage_reduce_current() {
 }
 
 #[test]
+fn cutoff_when_either_cell_reaches_threshold() {
+    let config = config();
+    let mut looper = Looper::new();
+    assert_eq!(tick_charging(&mut looper, &config, normal_params()), [100]);
+    assert_eq!(
+        tick_charging(
+            &mut looper,
+            &config,
+            params_with_current(4400.0, 4570.0, -180.0)
+        ),
+        [0]
+    );
+    assert!(
+        tick_charging(
+            &mut looper,
+            &config,
+            params_with_current(4400.0, 4570.0, -180.0)
+        )
+        .is_empty()
+    );
+}
+
+#[test]
 fn failed_vote_is_retried_without_advancing_state() {
     let config = config();
     let mut looper = Looper::new();
