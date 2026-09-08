@@ -78,7 +78,7 @@ pub(super) fn apply_battery_display_action(
         BatteryDisplayAction::LockLowLevel => &["set", "level", BATTERY_LOCKED_LEVEL],
     };
     battery_dumper
-        .dump(args)
+        .dump_only(args)
         .with_context(|| format!("执行 dumpsys battery {} 失败", args.join(" ")))?;
 
     match action {
