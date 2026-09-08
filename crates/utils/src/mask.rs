@@ -40,21 +40,20 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
     let masks_dir = MASKS_DIR
         .as_ref()
         .map_err(|error| io::Error::new(error.kind(), format!("获取 masks 目录失败: {error}")))?;
-    let file = path.canonicalize()?;
     let value = format!("{value}\n");
     let mask = write_mask_file(masks_dir, &value)?;
-    if let Err(error) = lock_value(&file, &value) {
+    if let Err(error) = lock_value(path, &value) {
         let _ = fs::remove_file(&mask);
         return Err(error);
     }
-    if let Err(error) = mount_bind(&mask, &file) {
+    if let Err(error) = mount_bind(&mask, path) {
         let _ = fs::remove_file(&mask);
         return Err(error.into());
     }
 
     let _ = Command::new("/system/bin/restorecon")
         .args(["-R", "-F"])
-        .arg(file)
+        .arg(path)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status();
