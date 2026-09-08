@@ -20,6 +20,9 @@ const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
+/// 充电类型映射（来源 `battery_log_content` 的 `charge_type` 字段）：
+/// `1=SDP 2=DCP 3=CDP 4=ACA 5=C 6=PD 7=PD_DRP 8=PD_PPS 9=PD_SDP`
+/// `10=APPLE_BKID 11=QC2 12=QC3 13=VOOC 14=SVOOC 15=UFCS`
 const UFCS_CHARGE_TYPE: u32 = 15;
 const CHARGE_TYPE_RETRY_COUNT: usize = 3;
 const CHARGE_TYPE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
