@@ -2,7 +2,7 @@ use std::{io, path::Path, sync::Arc, thread, time::Duration};
 
 use anyhow::{Context, Result};
 use config::{AtomicConfig, Config};
-use dumpsys_rs::Dumpsys;
+use dumpsys_rs::BoundDumpsys;
 use tracing::{error, info, warn};
 use utils::{
     BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, mask_val,
@@ -58,10 +58,10 @@ impl Looper {
 
     pub fn enter_loop(&mut self, config_manager: &Arc<AtomicConfig>) -> Result<()> {
         let battery_dumper = loop {
-            match Dumpsys::new("battery") {
-                Some(battery_dumper) => break battery_dumper,
-                None => thread::sleep(Duration::from_secs(1)),
+            if let Ok(battery_dumper) = BoundDumpsys::new("battery") {
+                break battery_dumper;
             }
+            thread::sleep(Duration::from_secs(1));
         };
         let mut reader = BccParamsReader::new()?;
         let mut charge_type_reader = ChargeTypeReader::new()?;

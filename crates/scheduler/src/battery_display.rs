@@ -1,7 +1,7 @@
 use std::io;
 
 use anyhow::{Context, Result};
-use dumpsys_rs::Dumpsys;
+use dumpsys_rs::BoundDumpsys;
 use tracing::{error, info, warn};
 
 const BATTERY_LEVEL_LOCK_THRESHOLD: u8 = 3;
@@ -70,7 +70,7 @@ impl BatteryDisplay {
 }
 
 pub(super) fn apply_battery_display_action(
-    battery_dumper: &Dumpsys,
+    battery_dumper: &BoundDumpsys,
     action: BatteryDisplayAction,
 ) -> Result<()> {
     let args: &[&str] = match action {

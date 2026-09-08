@@ -3,6 +3,8 @@
 > 基于真机实测（OPLUS 设备，Android 16 / BP2A.250605.015，KernelSU root）。
 > 所有行为均为 `su -c dumpsys battery ...` 实测结果，非纯源码推断。
 
+Rust 库绑定电池服务时的 `UnexpectedNull` 问题，参见 [故障与修复记录](RSBINDER_UNEXPECTED_NULL.md)。
+
 ## 核心结论
 
 `dumpsys battery` 是 Android `BatteryService` 的调试接口，核心机制只有两条：
