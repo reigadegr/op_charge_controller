@@ -21,7 +21,6 @@ const BATTERY_STATUS_PATH: &str =
 const UFCS_FORCE_VAL_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_val";
 const UFCS_FORCE_ACTIVE_PATH: &str = "/proc/oplus-votable/UFCS_CURR/force_active";
 const UFCS_CHARGE_TYPE: u32 = 15;
-const UNSET_CHARGE_TYPE: u32 = 0;
 const CHARGE_TYPE_RETRY_COUNT: usize = 3;
 const CHARGE_TYPE_RETRY_INTERVAL: Duration = Duration::from_secs(1);
 
@@ -267,27 +266,23 @@ impl Looper {
 
     fn read_charge_type(
         read_charge_type: impl FnMut() -> io::Result<u32>,
-        retry_on_unset_charge_type: bool,
+        retry: bool,
     ) -> io::Result<u32> {
-        Self::read_charge_type_with_retry(
-            read_charge_type,
-            thread::sleep,
-            retry_on_unset_charge_type,
-        )
+        Self::read_charge_type_with_retry(read_charge_type, thread::sleep, retry)
     }
 
     fn read_charge_type_with_retry(
         mut read_charge_type: impl FnMut() -> io::Result<u32>,
         mut sleep: impl FnMut(Duration),
-        retry_on_unset_charge_type: bool,
+        retry: bool,
     ) -> io::Result<u32> {
-        if !retry_on_unset_charge_type {
+        if !retry {
             return read_charge_type();
         }
 
         let mut charge_type = read_charge_type()?;
         for _ in 0..CHARGE_TYPE_RETRY_COUNT {
-            if charge_type != UNSET_CHARGE_TYPE {
+            if charge_type == UFCS_CHARGE_TYPE {
                 return Ok(charge_type);
             }
             sleep(CHARGE_TYPE_RETRY_INTERVAL);

@@ -455,16 +455,19 @@ fn count_charge_type_reads(values: &[u32], previous_charging: Option<bool>) -> u
 }
 
 #[test]
-fn unset_charge_type_is_reread_until_valid() {
+fn non_ufcs_charge_type_is_reread_until_valid() {
     assert_eq!(count_charge_type_reads(&[0, 0, 15], None), 3);
+    assert_eq!(count_charge_type_reads(&[14, 15], None), 2);
 }
 
 #[test]
-fn unset_charge_type_is_reread_at_most_three_times() {
+fn non_ufcs_charge_type_is_reread_at_most_three_times() {
     assert_eq!(count_charge_type_reads(&[0, 0, 0, 0], None), 4);
+    assert_eq!(count_charge_type_reads(&[14, 14, 14, 14], None), 4);
 }
 
 #[test]
-fn unset_charge_type_is_not_retried_after_charging_is_established() {
+fn non_ufcs_charge_type_is_not_retried_after_charging_is_established() {
     assert_eq!(count_charge_type_reads(&[0], Some(true)), 1);
+    assert_eq!(count_charge_type_reads(&[14], Some(true)), 1);
 }
