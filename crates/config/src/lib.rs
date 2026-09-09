@@ -17,6 +17,12 @@ pub struct Config {
     pub ufcs_taper_step_ma: u32,
     pub constant_voltage_mv: i32,
     pub charge_cutoff_mv: i32,
+    #[serde(default = "default_true")]
+    pub shell_back_emul_temp_enabled: bool,
+}
+
+const fn default_true() -> bool {
+    true
 }
 
 impl Config {

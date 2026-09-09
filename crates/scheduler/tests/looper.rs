@@ -13,6 +13,7 @@ const fn config() -> Config {
         ufcs_taper_step_ma: 100,
         constant_voltage_mv: 4500,
         charge_cutoff_mv: 4570,
+        shell_back_emul_temp_enabled: true,
     }
 }
 

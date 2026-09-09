@@ -39,6 +39,7 @@ fn atomic_config_reloads_valid_profiles_and_keeps_the_last_valid_one() -> anyhow
     let config = AtomicConfig::from_path(path.to_string_lossy())?;
     assert_eq!(config.profile(), path.to_string_lossy().as_ref());
     assert_eq!(config.get().ufcs_max_vote, 6200);
+    assert!(config.get().shell_back_emul_temp_enabled);
     assert!(fs::read_to_string(&path)?.contains("ufcs_max_vote = 6200"));
 
     write_profile(&path, &valid_profile(5000))?;
@@ -48,6 +49,27 @@ fn atomic_config_reloads_valid_profiles_and_keeps_the_last_valid_one() -> anyhow
     write_profile(&path, &valid_profile(-1))?;
     config.reload();
     assert_eq!(config.get().ufcs_max_vote, 5000);
+
+    fs::remove_file(&path)?;
+
+    Ok(())
+}
+
+#[test]
+fn shell_back_emul_temp_is_enabled_by_default_and_can_be_disabled() -> anyhow::Result<()> {
+    let path = profile_path("emul_temp");
+    let _ = fs::remove_file(&path);
+
+    write_profile(&path, &valid_profile(6200))?;
+    let config = AtomicConfig::from_path(path.to_string_lossy())?;
+    assert!(config.get().shell_back_emul_temp_enabled);
+
+    write_profile(
+        &path,
+        "ufcs_max_vote=6200\nufcs_ramp_step_ma=300\nufcs_taper_step_ma=100\nconstant_voltage_mv=4500\ncharge_cutoff_mv=4570\nshell_back_emul_temp_enabled=false\n",
+    )?;
+    config.reload();
+    assert!(!config.get().shell_back_emul_temp_enabled);
 
     fs::remove_file(&path)?;
 

@@ -57,7 +57,18 @@ impl Scheduler {
     }
 
     pub fn start_run(&self) -> Result<()> {
+        self.apply_shell_back_emul_temp();
         self.start_config_watcher();
         Looper::new().enter_loop(&self.atomic_config)
+    }
+
+    fn apply_shell_back_emul_temp(&self) {
+        if !self.atomic_config.get().shell_back_emul_temp_enabled {
+            info!("外壳模拟温度功能未启用，跳过");
+            return;
+        }
+        if let Err(error) = emul_temp::apply(emul_temp::RESET_TARGET) {
+            error!("设置外壳模拟温度失败: {error:#}");
+        }
     }
 }

@@ -1,5 +1,11 @@
 [workspace]
-members = ["crates/app", "crates/config", "crates/scheduler", "crates/utils"]
+members = [
+  "crates/app",
+  "crates/config",
+  "crates/emul_temp",
+  "crates/scheduler",
+  "crates/utils",
+]
 resolver = "3"
 
 [workspace.dependencies]
