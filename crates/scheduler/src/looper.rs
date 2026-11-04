@@ -157,11 +157,12 @@ impl Looper {
                 }
             );
         }
+        let charge_established = previous == Some(true);
         let ufcs = charging
-            && match Self::read_charge_type(read_charge_type, previous != Some(true)) {
+            && match Self::read_charge_type(read_charge_type, !charge_established) {
                 Ok(charge_type) if charge_type == UFCS_CHARGE_TYPE => true,
                 Ok(charge_type) => {
-                    if previous != Some(true) {
+                    if !charge_established {
                         info!(charge_type, "充电器类型非 UFCS，跳过充电控制");
                     }
                     false
@@ -171,7 +172,7 @@ impl Looper {
                     false
                 }
             };
-        if ufcs && previous != Some(true) {
+        if ufcs && !charge_established {
             self.session = None;
             self.released = false;
         }

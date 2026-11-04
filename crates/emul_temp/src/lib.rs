@@ -7,11 +7,10 @@ const THERMAL_ZONES_DIR: &str = "/sys/class/thermal";
 const SHELL_TEMP_PATH: &str = "/proc/shell-temp";
 const FAKE_BATT_TEMP: i32 = 36000;
 const SHELL_TEMP_INDEX_MAX: u32 = 2;
+const RESET_TARGET: i32 = 0;
 
-pub const RESET_TARGET: i32 = 0;
-
-pub fn apply(target: i32) -> Result<()> {
-    set_thermal_zone_emul_temp(Path::new(THERMAL_ZONES_DIR), target);
+pub fn apply() -> Result<()> {
+    set_thermal_zone_emul_temp(Path::new(THERMAL_ZONES_DIR), RESET_TARGET);
     set_fake_batt_temp(Path::new(SHELL_TEMP_PATH))
 }
 

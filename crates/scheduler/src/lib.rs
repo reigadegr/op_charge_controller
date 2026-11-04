@@ -67,7 +67,7 @@ impl Scheduler {
             info!("外壳模拟温度功能未启用，跳过");
             return;
         }
-        if let Err(error) = emul_temp::apply(emul_temp::RESET_TARGET) {
+        if let Err(error) = emul_temp::apply() {
             error!("设置外壳模拟温度失败: {error:#}");
         }
     }

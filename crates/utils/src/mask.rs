@@ -14,7 +14,7 @@ use rustix::{
 
 static MASKS_DIR: LazyLock<io::Result<PathBuf>> = LazyLock::new(|| masks_dir(&env::current_exe()?));
 
-pub fn masks_dir(executable: &Path) -> io::Result<PathBuf> {
+fn masks_dir(executable: &Path) -> io::Result<PathBuf> {
     executable
         .parent()
         .map(|directory| directory.join("masks"))
@@ -71,7 +71,7 @@ pub fn unmask_val(path: &Path) -> io::Result<()> {
     }
 }
 
-pub fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
+fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map_err(io::Error::other)?
@@ -88,4 +88,35 @@ pub fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
     }
 
     Ok(mask)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::process;
+
+    use super::*;
+
+    #[test]
+    fn masks_dir_is_next_to_executable() {
+        assert!(matches!(
+            masks_dir(Path::new("/system/bin/op_charge_controller")),
+            Ok(path) if path == Path::new("/system/bin/masks")
+        ));
+    }
+
+    #[test]
+    fn masks_dir_rejects_executable_without_parent() {
+        assert!(masks_dir(Path::new("/")).is_err());
+    }
+
+    #[test]
+    fn write_mask_file_creates_missing_masks_directory() -> io::Result<()> {
+        let dir = env::temp_dir().join(format!("op_charge_controller_{}_masks", process::id()));
+        let _ = fs::remove_dir_all(&dir);
+
+        let mask = write_mask_file(&dir, "1\n")?;
+
+        assert_eq!(fs::read_to_string(&mask)?, "1\n");
+        fs::remove_dir_all(dir)
+    }
 }

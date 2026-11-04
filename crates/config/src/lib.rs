@@ -1,4 +1,4 @@
-pub mod format_profile;
+mod format_profile;
 
 use std::{env, fs, sync::Arc};
 

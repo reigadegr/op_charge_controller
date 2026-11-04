@@ -5,7 +5,7 @@ use std::{
     process,
 };
 
-use emul_temp::{RESET_TARGET, set_fake_batt_temp, set_thermal_zone_emul_temp};
+use emul_temp::{set_fake_batt_temp, set_thermal_zone_emul_temp};
 
 fn temp_dir(name: &str) -> std::path::PathBuf {
     std::env::temp_dir().join(format!("emul_temp_{}_{}", process::id(), name))
@@ -22,7 +22,7 @@ fn sets_emul_temp_on_zones_with_node_and_skips_missing_ones() -> anyhow::Result<
     fs::write(with_node.join("type"), "shell_back\n")?;
     fs::write(with_node.join("emul_temp"), "999\n")?;
 
-    set_thermal_zone_emul_temp(&root, RESET_TARGET);
+    set_thermal_zone_emul_temp(&root, 0);
 
     assert_eq!(fs::read_to_string(with_node.join("emul_temp"))?, "0\n");
     assert!(!without_node.join("emul_temp").exists());
@@ -51,7 +51,7 @@ fn ignores_entries_that_are_not_thermal_zone_dirs() -> anyhow::Result<()> {
 
 #[test]
 fn missing_thermal_dir_is_not_an_error() {
-    set_thermal_zone_emul_temp(Path::new("/nonexistent/thermal"), RESET_TARGET);
+    set_thermal_zone_emul_temp(Path::new("/nonexistent/thermal"), 0);
 }
 
 #[test]
@@ -80,7 +80,7 @@ fn a_failed_zone_does_not_prevent_other_writes() -> anyhow::Result<()> {
     fs::create_dir_all(&writable)?;
     fs::write(writable.join("emul_temp"), "999\n")?;
 
-    set_thermal_zone_emul_temp(&root, RESET_TARGET);
+    set_thermal_zone_emul_temp(&root, 0);
 
     assert_eq!(fs::read_to_string(writable.join("emul_temp"))?, "0\n");
     fs::remove_dir_all(&root)?;

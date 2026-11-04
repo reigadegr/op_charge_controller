@@ -2,7 +2,6 @@ use anyhow::{Context, Result};
 use dumpsys_rs::BoundDumpsys;
 use tracing::{error, info};
 
-#[derive(Clone, Copy)]
 pub(super) struct BatteryDisplay {
     was_charging: Option<bool>,
 }
