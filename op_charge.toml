@@ -3,4 +3,5 @@ ufcs_ramp_step_ma = 300
 ufcs_taper_step_ma = 100
 constant_voltage_mv = 4500
 charge_cutoff_mv = 4570
+ufcs_release_capacity = 90
 shell_back_emul_temp_enabled = true

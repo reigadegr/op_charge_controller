@@ -1,7 +1,7 @@
 use std::io;
 
 use config::Config;
-use scheduler::looper::{BatteryDisplayAction, Looper};
+use scheduler::looper::{BatterySample, Looper, UfcsVoter};
 use utils::BccParams;
 
 const UFCS_CHARGE_TYPE: u32 = 15;
@@ -13,6 +13,7 @@ const fn config() -> Config {
         ufcs_taper_step_ma: 100,
         constant_voltage_mv: 4500,
         charge_cutoff_mv: 4570,
+        ufcs_release_capacity: 90,
         shell_back_emul_temp_enabled: true,
     }
 }
@@ -33,9 +34,46 @@ const fn normal_params() -> BccParams {
     params(4400.0, 4390.0)
 }
 
+#[derive(Default)]
+struct Recorder {
+    votes: Vec<i32>,
+    releases: usize,
+}
+
+impl UfcsVoter for Recorder {
+    fn apply(&mut self, vote: i32) -> anyhow::Result<()> {
+        self.votes.push(vote);
+        Ok(())
+    }
+
+    fn release(&mut self) -> anyhow::Result<()> {
+        self.releases += 1;
+        Ok(())
+    }
+}
+
+struct FailingVoter {
+    failed: bool,
+}
+
+impl UfcsVoter for FailingVoter {
+    fn apply(&mut self, _vote: i32) -> anyhow::Result<()> {
+        if self.failed {
+            return Ok(());
+        }
+        self.failed = true;
+        anyhow::bail!("failed");
+    }
+
+    fn release(&mut self) -> anyhow::Result<()> {
+        Ok(())
+    }
+}
+
 struct TickResult {
     votes: Vec<i32>,
-    actions: Vec<BatteryDisplayAction>,
+    releases: usize,
+    resets: usize,
 }
 
 fn tick(
@@ -56,30 +94,18 @@ fn tick_not_charging(looper: &mut Looper, config: &Config, p: BccParams) -> Vec<
     tick(looper, config, false, UFCS_CHARGE_TYPE, p)
 }
 
-fn tick_actions(
-    looper: &mut Looper,
-    config: &Config,
-    charging: bool,
-    p: BccParams,
-    capacity: u8,
-) -> Vec<BatteryDisplayAction> {
-    tick_with_capacity(looper, config, charging, UFCS_CHARGE_TYPE, p, capacity).actions
-}
-
 fn fail_next_vote(looper: &mut Looper, config: &Config) {
-    let mut vote_failed = true;
-    let previous_charging = looper.handle_battery_display(true, || Ok(65), |_| Ok(()));
+    let previous_charging = looper.handle_battery_display(true, || Ok(()));
     looper.handle_battery_status(
         config,
-        || Ok(normal_params()),
-        || Ok(UFCS_CHARGE_TYPE),
-        |_| {
-            if vote_failed {
-                vote_failed = false;
-                anyhow::bail!("failed");
-            }
-            Ok(())
+        || {
+            Ok(BatterySample {
+                params: normal_params(),
+                capacity: 65,
+            })
         },
+        || Ok(UFCS_CHARGE_TYPE),
+        &mut FailingVoter { failed: false },
         previous_charging,
         true,
     );
@@ -93,28 +119,30 @@ fn tick_with_capacity(
     p: BccParams,
     capacity: u8,
 ) -> TickResult {
-    let mut votes = Vec::new();
-    let mut actions = Vec::new();
-    let previous_charging = looper.handle_battery_display(
-        charging,
-        || Ok(capacity),
-        |action| {
-            actions.push(action);
-            Ok(())
-        },
-    );
+    let mut recorder = Recorder::default();
+    let mut resets = 0;
+    let previous_charging = looper.handle_battery_display(charging, || {
+        resets += 1;
+        Ok(())
+    });
     looper.handle_battery_status(
         config,
-        || Ok(p),
-        || Ok(charge_type),
-        |vote| {
-            votes.push(vote);
-            Ok(())
+        || {
+            Ok(BatterySample {
+                params: p,
+                capacity,
+            })
         },
+        || Ok(charge_type),
+        &mut recorder,
         previous_charging,
         charging,
     );
-    TickResult { votes, actions }
+    TickResult {
+        votes: recorder.votes,
+        releases: recorder.releases,
+        resets,
+    }
 }
 
 #[test]
@@ -324,113 +352,181 @@ fn non_ufcs_charger_skips_control() {
 fn charge_type_read_failure_skips_control() {
     let config = config();
     let mut looper = Looper::new();
-    let mut votes = Vec::new();
-    let previous_charging = looper.handle_battery_display(true, || Ok(65), |_| Ok(()));
+    let mut recorder = Recorder::default();
+    let previous_charging = looper.handle_battery_display(true, || Ok(()));
     looper.handle_battery_status(
         &config,
-        || Ok(normal_params()),
-        || Err(io::Error::new(io::ErrorKind::InvalidData, "读取失败")),
-        |vote| {
-            votes.push(vote);
-            Ok(())
+        || {
+            Ok(BatterySample {
+                params: normal_params(),
+                capacity: 65,
+            })
         },
+        || Err(io::Error::new(io::ErrorKind::InvalidData, "读取失败")),
+        &mut recorder,
         previous_charging,
         true,
     );
-    assert!(votes.is_empty());
+    assert!(recorder.votes.is_empty());
 }
 
 #[test]
-fn low_battery_display_is_locked_once_and_reset_when_charging_starts() {
+fn capacity_above_threshold_releases_control_and_stops_voting() {
+    let config = config();
+    let mut looper = Looper::new();
+
+    let released = tick_with_capacity(
+        &mut looper,
+        &config,
+        true,
+        UFCS_CHARGE_TYPE,
+        normal_params(),
+        91,
+    );
+    assert!(released.votes.is_empty());
+    assert_eq!(released.releases, 1);
+
+    let released_again = tick_with_capacity(
+        &mut looper,
+        &config,
+        true,
+        UFCS_CHARGE_TYPE,
+        normal_params(),
+        91,
+    );
+    assert!(released_again.votes.is_empty());
+    assert_eq!(released_again.releases, 0);
+}
+
+#[test]
+fn capacity_at_threshold_keeps_control() {
+    let config = config();
+    let mut looper = Looper::new();
+
+    let kept = tick_with_capacity(
+        &mut looper,
+        &config,
+        true,
+        UFCS_CHARGE_TYPE,
+        normal_params(),
+        90,
+    );
+    assert_eq!(kept.votes, [100]);
+    assert_eq!(kept.releases, 0);
+}
+
+#[test]
+fn released_control_is_not_resumed_within_the_same_session() {
+    let config = config();
+    let mut looper = Looper::new();
+
+    assert_eq!(
+        tick_with_capacity(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            normal_params(),
+            91,
+        )
+        .releases,
+        1
+    );
+
+    let dropped = tick_with_capacity(
+        &mut looper,
+        &config,
+        true,
+        UFCS_CHARGE_TYPE,
+        normal_params(),
+        80,
+    );
+    assert!(dropped.votes.is_empty());
+    assert_eq!(dropped.releases, 0);
+}
+
+#[test]
+fn a_new_charging_session_takes_control_again_after_release() {
+    let config = config();
+    let mut looper = Looper::new();
+
+    assert_eq!(
+        tick_with_capacity(
+            &mut looper,
+            &config,
+            true,
+            UFCS_CHARGE_TYPE,
+            normal_params(),
+            91,
+        )
+        .releases,
+        1
+    );
+    assert!(
+        tick_with_capacity(
+            &mut looper,
+            &config,
+            false,
+            UFCS_CHARGE_TYPE,
+            normal_params(),
+            91,
+        )
+        .votes
+        .is_empty()
+    );
+
+    let resumed = tick_with_capacity(
+        &mut looper,
+        &config,
+        true,
+        UFCS_CHARGE_TYPE,
+        normal_params(),
+        60,
+    );
+    assert_eq!(resumed.votes, [100]);
+    assert_eq!(resumed.releases, 0);
+}
+
+#[test]
+fn battery_display_is_reset_when_charging_starts() {
     let config = config();
     let mut looper = Looper::new();
     let params = normal_params();
 
-    assert!(tick_actions(&mut looper, &config, false, params, 65).is_empty());
     assert_eq!(
-        tick_actions(&mut looper, &config, false, params, 2),
-        [BatteryDisplayAction::LockLowLevel]
+        tick_with_capacity(&mut looper, &config, false, UFCS_CHARGE_TYPE, params, 2).resets,
+        0
     );
-    assert!(tick_actions(&mut looper, &config, false, params, 2).is_empty());
     assert_eq!(
-        tick_actions(&mut looper, &config, true, params, 2),
-        [BatteryDisplayAction::Reset]
+        tick_with_capacity(&mut looper, &config, true, UFCS_CHARGE_TYPE, params, 2).resets,
+        1
     );
-    assert!(tick_actions(&mut looper, &config, true, params, 2).is_empty());
-}
-
-#[test]
-fn charging_transition_resets_battery_display_without_low_level_lock() {
-    let config = config();
-    let mut looper = Looper::new();
-    let params = normal_params();
-
-    assert!(tick_actions(&mut looper, &config, false, params, 65).is_empty());
     assert_eq!(
-        tick_actions(&mut looper, &config, true, params, 65),
-        [BatteryDisplayAction::Reset]
+        tick_with_capacity(&mut looper, &config, true, UFCS_CHARGE_TYPE, params, 2).resets,
+        0
     );
-}
-
-#[test]
-fn battery_capacity_read_failure_does_not_lock_display() {
-    let mut looper = Looper::new();
-    let mut actions = Vec::new();
-
-    looper.handle_battery_display(
-        false,
-        || Err(io::Error::new(io::ErrorKind::InvalidData, "读取失败")),
-        |action| {
-            actions.push(action);
-            Ok(())
-        },
-    );
-
-    assert!(actions.is_empty());
 }
 
 #[test]
 fn failed_display_reset_is_retried_while_charging() {
     let mut looper = Looper::new();
-    let mut actions = Vec::new();
+    let mut resets = 0;
 
-    looper.handle_battery_display(
-        false,
-        || Ok(65),
-        |action| {
-            actions.push(action);
-            Ok(())
-        },
-    );
-    looper.handle_battery_display(
-        true,
-        || Ok(2),
-        |action| {
-            actions.push(action);
-            anyhow::bail!("failed")
-        },
-    );
-    looper.handle_battery_display(
-        true,
-        || Ok(2),
-        |action| {
-            actions.push(action);
-            Ok(())
-        },
-    );
-    looper.handle_battery_display(
-        true,
-        || Ok(2),
-        |action| {
-            actions.push(action);
-            Ok(())
-        },
-    );
+    looper.handle_battery_display(false, || Ok(()));
+    looper.handle_battery_display(true, || {
+        resets += 1;
+        anyhow::bail!("failed")
+    });
+    looper.handle_battery_display(true, || {
+        resets += 1;
+        Ok(())
+    });
+    looper.handle_battery_display(true, || {
+        resets += 1;
+        Ok(())
+    });
 
-    assert_eq!(
-        actions,
-        [BatteryDisplayAction::Reset, BatteryDisplayAction::Reset]
-    );
+    assert_eq!(resets, 2);
 }
 
 fn count_charge_type_reads(values: &[u32], previous_charging: Option<bool>) -> usize {
@@ -440,14 +536,19 @@ fn count_charge_type_reads(values: &[u32], previous_charging: Option<bool>) -> u
 
     looper.handle_battery_status(
         &config(),
-        || Ok(normal_params()),
+        || {
+            Ok(BatterySample {
+                params: normal_params(),
+                capacity: 65,
+            })
+        },
         || {
             reads += 1;
             values
                 .next()
                 .ok_or_else(|| io::Error::other("unexpected charge type read"))
         },
-        |_| Ok(()),
+        &mut Recorder::default(),
         previous_charging,
         true,
     );

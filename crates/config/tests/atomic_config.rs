@@ -39,6 +39,7 @@ fn atomic_config_reloads_valid_profiles_and_keeps_the_last_valid_one() -> anyhow
     let config = AtomicConfig::from_path(path.to_string_lossy())?;
     assert_eq!(config.profile(), path.to_string_lossy().as_ref());
     assert_eq!(config.get().ufcs_max_vote, 6200);
+    assert_eq!(config.get().ufcs_release_capacity, 90);
     assert!(config.get().shell_back_emul_temp_enabled);
     assert!(fs::read_to_string(&path)?.contains("ufcs_max_vote = 6200"));
 
@@ -90,6 +91,10 @@ fn invalid_profiles_are_rejected_before_formatting() -> anyhow::Result<()> {
         (
             "invalid_cutoff",
             "ufcs_max_vote=6200\nufcs_ramp_step_ma=300\nufcs_taper_step_ma=100\nconstant_voltage_mv=4570\ncharge_cutoff_mv=4500\n",
+        ),
+        (
+            "invalid_release_capacity",
+            "ufcs_max_vote=6200\nufcs_ramp_step_ma=300\nufcs_taper_step_ma=100\nconstant_voltage_mv=4500\ncharge_cutoff_mv=4570\nufcs_release_capacity=101\n",
         ),
         ("malformed", "ufcs_max_vote = 6200\n"),
     ];

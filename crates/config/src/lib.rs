@@ -17,8 +17,14 @@ pub struct Config {
     pub ufcs_taper_step_ma: u32,
     pub constant_voltage_mv: i32,
     pub charge_cutoff_mv: i32,
+    #[serde(default = "default_release_capacity")]
+    pub ufcs_release_capacity: u8,
     #[serde(default = "default_true")]
     pub shell_back_emul_temp_enabled: bool,
+}
+
+const fn default_release_capacity() -> u8 {
+    90
 }
 
 const fn default_true() -> bool {
@@ -44,6 +50,9 @@ impl Config {
         }
         if self.charge_cutoff_mv < self.constant_voltage_mv {
             anyhow::bail!("charge_cutoff_mv 不能小于 constant_voltage_mv");
+        }
+        if self.ufcs_release_capacity > 100 {
+            anyhow::bail!("ufcs_release_capacity 不能大于 100");
         }
 
         Ok(())

@@ -5,7 +5,8 @@ use config::{AtomicConfig, Config};
 use dumpsys_rs::BoundDumpsys;
 use tracing::{error, info, warn};
 use utils::{
-    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, mask_val,
+    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, lock_val,
+    mask_val, unmask_val,
 };
 
 use crate::{ramp_up, taper};
@@ -13,8 +14,7 @@ use crate::{ramp_up, taper};
 #[path = "battery_display.rs"]
 mod battery_display;
 
-pub use battery_display::BatteryDisplayAction;
-use battery_display::{BatteryDisplay, apply_battery_display_action};
+use battery_display::{BatteryDisplay, reset_battery_display};
 
 const BATTERY_STATUS_PATH: &str =
     "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/status";
@@ -42,9 +42,41 @@ struct Session {
     cut_off: bool,
 }
 
+pub trait UfcsVoter {
+    fn apply(&mut self, vote: i32) -> Result<()>;
+    fn release(&mut self) -> Result<()>;
+}
+
+/// 一轮循环读到的电池数据：电芯参数与剩余电量。
+pub struct BatterySample {
+    pub params: BccParams,
+    pub capacity: u8,
+}
+
+struct SysfsVoter;
+
+impl UfcsVoter for SysfsVoter {
+    fn apply(&mut self, vote: i32) -> Result<()> {
+        mask_val(&vote.to_string(), Path::new(UFCS_FORCE_VAL_PATH))
+            .context("设置 UFCS 电流失败")?;
+        mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("启用 UFCS 强制投票失败")?;
+        info!(current_vote_ma = vote, "UFCS 电流已锁定");
+        Ok(())
+    }
+
+    fn release(&mut self) -> Result<()> {
+        unmask_val(Path::new(UFCS_FORCE_VAL_PATH)).context("卸载 UFCS 电流遮罩失败")?;
+        // 遮罩卸载后底层真实节点里仍是遮罩前直写的状态，需显式关闭强制投票。
+        lock_val("0", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("关闭 UFCS 强制投票失败")?;
+        info!("已卸载 UFCS 遮罩并关闭强制投票，电流交还充电栈");
+        Ok(())
+    }
+}
+
 pub struct Looper {
     battery_display: BatteryDisplay,
     session: Option<Session>,
+    released: bool,
 }
 
 impl Looper {
@@ -53,6 +85,7 @@ impl Looper {
         Self {
             battery_display: BatteryDisplay::new(),
             session: None,
+            released: false,
         }
     }
 
@@ -67,20 +100,23 @@ impl Looper {
         let mut charge_type_reader = ChargeTypeReader::new()?;
         let mut capacity_reader = BatteryCapacityReader::new()?;
         let mut status_reader = SysfsReader::new(BATTERY_STATUS_PATH, 16)?;
+        let mut voter = SysfsVoter;
         loop {
             match status_reader.read() {
                 Ok(content) => {
                     let charging = content.trim() == "Charging";
-                    let previous_charging = self.handle_battery_display(
-                        charging,
-                        || capacity_reader.read(),
-                        |action| apply_battery_display_action(&battery_dumper, action),
-                    );
+                    let previous_charging = self.handle_battery_display(charging, || {
+                        reset_battery_display(&battery_dumper)
+                    });
                     self.handle_battery_status(
                         &config_manager.get(),
-                        || reader.read(),
+                        || {
+                            let params = reader.read()?;
+                            let capacity = capacity_reader.read()?;
+                            Ok(BatterySample { params, capacity })
+                        },
                         || charge_type_reader.read(),
-                        Self::apply_ufcs_vote,
+                        &mut voter,
                         previous_charging,
                         charging,
                     );
@@ -94,19 +130,17 @@ impl Looper {
     pub fn handle_battery_display(
         &mut self,
         charging: bool,
-        read_capacity: impl FnOnce() -> io::Result<u8>,
-        apply_action: impl FnMut(BatteryDisplayAction) -> Result<()>,
+        apply_reset: impl FnMut() -> Result<()>,
     ) -> Option<bool> {
-        self.battery_display
-            .handle(charging, read_capacity, apply_action)
+        self.battery_display.handle(charging, apply_reset)
     }
 
     pub fn handle_battery_status(
         &mut self,
         config: &Config,
-        read_params: impl FnOnce() -> io::Result<BccParams>,
+        read_sample: impl FnOnce() -> io::Result<BatterySample>,
         read_charge_type: impl FnMut() -> io::Result<u32>,
-        apply_vote: impl FnMut(i32) -> Result<()>,
+        voter: &mut impl UfcsVoter,
         previous: Option<bool>,
         charging: bool,
     ) {
@@ -139,10 +173,11 @@ impl Looper {
             };
         if ufcs && previous != Some(true) {
             self.session = None;
+            self.released = false;
         }
         if ufcs {
             let _ = self
-                .handle_charge_data(config, read_params, apply_vote)
+                .handle_charge_data(config, read_sample, voter)
                 .inspect_err(|error| error!("处理充电数据失败: {error:#}"));
         }
         info!("{}", if charging { "充电中" } else { "未充电" });
@@ -151,12 +186,19 @@ impl Looper {
     fn handle_charge_data(
         &mut self,
         config: &Config,
-        read_params: impl FnOnce() -> io::Result<BccParams>,
-        mut apply_vote: impl FnMut(i32) -> Result<()>,
+        read_sample: impl FnOnce() -> io::Result<BatterySample>,
+        voter: &mut impl UfcsVoter,
     ) -> Result<()> {
-        let (mut session, first_sample) = self.start_session(config, &mut apply_vote)?;
+        if self.released {
+            return Ok(());
+        }
+        let BatterySample { params, capacity } = read_sample().context("读取电池数据失败")?;
+        if capacity > config.ufcs_release_capacity {
+            return self.release_control(config, capacity, voter);
+        }
+
+        let (mut session, first_sample) = self.start_session(config, voter)?;
         let current = session.current_vote;
-        let params = read_params().context("读取充电数据失败")?;
         info!(
             cell_voltage_1_mv = params.cell_voltage_1_mv,
             cell_voltage_2_mv = params.cell_voltage_2_mv,
@@ -173,7 +215,7 @@ impl Looper {
             over_voltage,
         );
         if next != current {
-            apply_vote(next)?;
+            voter.apply(next)?;
             session.current_vote = next;
             if session.cut_off {
                 warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
@@ -184,10 +226,27 @@ impl Looper {
         Ok(())
     }
 
+    fn release_control(
+        &mut self,
+        config: &Config,
+        capacity: u8,
+        voter: &mut impl UfcsVoter,
+    ) -> Result<()> {
+        voter.release()?;
+        self.session = None;
+        self.released = true;
+        info!(
+            capacity,
+            ufcs_release_capacity = config.ufcs_release_capacity,
+            "电池电量已超过阈值，解除 UFCS 电流控制"
+        );
+        Ok(())
+    }
+
     fn start_session(
         &mut self,
         config: &Config,
-        apply_vote: &mut impl FnMut(i32) -> Result<()>,
+        voter: &mut impl UfcsVoter,
     ) -> Result<(Session, bool)> {
         if let Some(session) = self.session {
             return Ok((session, false));
@@ -197,7 +256,7 @@ impl Looper {
             Ok(step) => step.min(config.ufcs_max_vote),
             Err(_) => config.ufcs_max_vote,
         };
-        apply_vote(vote)?;
+        voter.apply(vote)?;
         let session = Session {
             current_vote: vote,
             ramp_step_ma: step,
@@ -257,14 +316,6 @@ impl Looper {
                 next
             }
         }
-    }
-
-    fn apply_ufcs_vote(vote: i32) -> Result<()> {
-        mask_val(&vote.to_string(), Path::new(UFCS_FORCE_VAL_PATH))
-            .context("设置 UFCS 电流失败")?;
-        mask_val("1", Path::new(UFCS_FORCE_ACTIVE_PATH)).context("启用 UFCS 强制投票失败")?;
-        info!(current_vote_ma = vote, "UFCS 电流已锁定");
-        Ok(())
     }
 
     fn read_charge_type(

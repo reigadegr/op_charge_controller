@@ -8,6 +8,7 @@ use std::{
 
 use rustix::{
     fs::{Gid, Mode, Uid, chmod, chown},
+    io::Errno,
     mount::{UnmountFlags, mount_bind, unmount},
 };
 
@@ -59,6 +60,15 @@ pub fn mask_val(value: &str, path: &Path) -> io::Result<()> {
         .status();
 
     Ok(())
+}
+
+pub fn unmask_val(path: &Path) -> io::Result<()> {
+    match unmount(path, UnmountFlags::empty()) {
+        Ok(()) => Ok(()),
+        // 未挂载遮罩时视为已卸载
+        Err(error) if error == Errno::INVAL || error == Errno::NOENT => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 pub fn write_mask_file(masks_dir: &Path, value: &str) -> io::Result<PathBuf> {
