@@ -6,5 +6,6 @@ charge_cutoff_mv = 4570
 ufcs_release_capacity = 90
 shell_back_emul_temp_enabled = true
 # 开始降流的电池温度，取值为温度节点的原始值（441 表示 44.1℃）。
-# 每超出 1（0.1℃）就在最终电流上减去 100mA。
+# 每超出 1（0.1℃）就在最终电流上减去 100mA，仅作用于升流与恒流阶段；
+# 恒压阶段由 taper 闭环降流，温度不参与。
 temp_taper_start = 440

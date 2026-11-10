@@ -691,3 +691,63 @@ fn the_first_vote_of_a_session_is_also_derated() {
         [200]
     );
 }
+
+/// 模拟恒压闭环：首轮建立会话，之后每轮电压达到恒压阈值，
+/// 且把上一轮实际写入的电流作为本轮实测电流喂回状态机。
+fn constant_voltage_votes(config: &Config, temps: &[i32]) -> Vec<i32> {
+    let mut looper = Looper::new();
+    let mut measured_current = 0.0;
+    temps
+        .iter()
+        .enumerate()
+        .map(|(round, &temp)| {
+            let p = if round == 0 {
+                normal_params()
+            } else {
+                params_with_current(4500.0, 4390.0, measured_current)
+            };
+            let votes = tick_charging_with_temp(&mut looper, config, p, temp);
+            assert_eq!(votes.len(), 1, "恒压阶段每轮都应重新投票");
+            let vote = votes[0];
+            measured_current = -f64::from(vote);
+            vote
+        })
+        .collect()
+}
+
+#[test]
+fn constant_voltage_phase_is_not_derated_by_temperature() {
+    let config = Config {
+        ufcs_max_vote: 6500,
+        ufcs_ramp_step_ma: 6500,
+        ..config()
+    };
+    let normal = constant_voltage_votes(&config, &[430; 6]);
+    // 温度在阈值上下剧烈抖动，恒压阶段仍只按 ufcs_taper_step_ma 每轮降 100mA。
+    let hot = constant_voltage_votes(&config, &[450, 450, 430, 460, 430, 450]);
+
+    assert_eq!(normal, [6500, 6400, 6300, 6200, 6100, 6000]);
+    assert_eq!(hot, [5500, 5400, 5300, 5200, 5100, 5000]);
+    // 进入恒压前的一次降额由实测电流自然继承，恒压阶段不再重复扣除。
+    assert_eq!(
+        hot,
+        normal.iter().map(|&vote| vote - 1000).collect::<Vec<i32>>()
+    );
+}
+
+#[test]
+fn high_temperature_does_not_run_away_or_latch_current_at_zero_in_constant_voltage() {
+    let config = Config {
+        ufcs_max_vote: 6500,
+        ufcs_ramp_step_ma: 6500,
+        ..config()
+    };
+    let votes = constant_voltage_votes(&config, &[460; 12]);
+
+    assert_eq!(
+        votes,
+        (0..12)
+            .map(|round| 4500 - 100 * round)
+            .collect::<Vec<i32>>()
+    );
+}

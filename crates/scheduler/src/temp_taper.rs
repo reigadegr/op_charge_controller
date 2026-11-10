@@ -4,6 +4,9 @@ use config::Config;
 const TEMP_TAPER_STEP_MA: i32 = 100;
 
 /// 在原本要输出的电流上按实时电池温度做减法，结果不低于 0。
+///
+/// 只用于升流与恒流阶段。恒压阶段的降流由 `taper` 基于实测电流闭环完成，
+/// 调用方必须跳过本函数，否则降额量会随实测电流重复进入反馈回路。
 pub fn apply(vote: i32, temp: i32, config: &Config) -> i32 {
     let over = temp.saturating_sub(config.temp_taper_start).max(0);
     vote.saturating_sub(over.saturating_mul(TEMP_TAPER_STEP_MA))

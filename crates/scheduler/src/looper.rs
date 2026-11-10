@@ -230,7 +230,14 @@ impl Looper {
             params.current_ma,
             over_voltage,
         );
-        let next = temp_taper::apply(base, temp, config);
+        // 恒压阶段完全交给 taper 基于实测电流闭环降流，温度降额不介入：
+        // 实测电流已包含上一轮写入的降额结果，若此处再减一次，降额量就会
+        // 顺着实测电流重复进入下一轮 taper，形成正反馈直至把电流锁死在 0。
+        let next = if session.phase == ChargePhase::ConstantVoltage {
+            base
+        } else {
+            temp_taper::apply(base, temp, config)
+        };
         if next != session.applied_vote {
             if next != base {
                 info!(
