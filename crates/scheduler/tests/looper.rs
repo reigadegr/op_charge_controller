@@ -189,7 +189,10 @@ fn ramps_by_one_locked_step_and_enters_constant_current_at_cap() {
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [100]);
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [200]);
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [250]);
-    assert!(tick_charging(&mut looper, &config, normal_params()).is_empty());
+    assert_eq!(
+        tick_charging(&mut looper, &config, normal_params()),
+        [] as [i32; 0]
+    );
 }
 
 #[test]
@@ -209,7 +212,10 @@ fn cutoff_and_constant_voltage_reduce_current() {
         tick_charging(&mut looper, &config, params(4570.0, 4390.0)),
         [0]
     );
-    assert!(tick_charging(&mut looper, &config, params(4570.0, 4390.0)).is_empty());
+    assert_eq!(
+        tick_charging(&mut looper, &config, params(4570.0, 4390.0)),
+        [] as [i32; 0]
+    );
 }
 
 #[test]
@@ -225,13 +231,13 @@ fn cutoff_when_either_cell_reaches_threshold() {
         ),
         [0]
     );
-    assert!(
+    assert_eq!(
         tick_charging(
             &mut looper,
             &config,
             params_with_current(4400.0, 4570.0, -180.0)
-        )
-        .is_empty()
+        ),
+        [] as [i32; 0]
     );
 }
 
@@ -285,7 +291,10 @@ fn ramp_and_taper_use_their_own_steps() {
         ),
         [250]
     );
-    assert!(tick_charging(&mut looper, &config, normal_params()).is_empty());
+    assert_eq!(
+        tick_charging(&mut looper, &config, normal_params()),
+        [] as [i32; 0]
+    );
 }
 
 #[test]
@@ -317,13 +326,13 @@ fn taper_uses_last_recorded_current_and_floors_at_zero() {
         ),
         [0]
     );
-    assert!(
+    assert_eq!(
         tick_charging(
             &mut looper,
             &config,
             params_with_current(4500.0, 4390.0, 30.0)
-        )
-        .is_empty()
+        ),
+        [] as [i32; 0]
     );
 }
 
@@ -359,7 +368,10 @@ fn a_new_session_restarts_from_initial_step() {
     let config = config();
     let mut looper = Looper::new();
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [100]);
-    assert!(tick_not_charging(&mut looper, &config, normal_params()).is_empty());
+    assert_eq!(
+        tick_not_charging(&mut looper, &config, normal_params()),
+        [] as [i32; 0]
+    );
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [100]);
 }
 
@@ -369,15 +381,24 @@ fn repeated_not_charging_status_is_skipped() {
     let mut looper = Looper::new();
     let params = normal_params();
 
-    assert!(tick_not_charging(&mut looper, &config, params).is_empty());
-    assert!(tick_not_charging(&mut looper, &config, params).is_empty());
+    assert_eq!(
+        tick_not_charging(&mut looper, &config, params),
+        [] as [i32; 0]
+    );
+    assert_eq!(
+        tick_not_charging(&mut looper, &config, params),
+        [] as [i32; 0]
+    );
 }
 
 #[test]
 fn non_ufcs_charger_skips_control() {
     let config = config();
     let mut looper = Looper::new();
-    assert!(tick(&mut looper, &config, true, 14, normal_params()).is_empty());
+    assert_eq!(
+        tick(&mut looper, &config, true, 14, normal_params()),
+        [] as [i32; 0]
+    );
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [100]);
     assert_eq!(tick_charging(&mut looper, &config, normal_params()), [200]);
 }
@@ -402,7 +423,7 @@ fn charge_type_read_failure_skips_control() {
         previous_charging,
         true,
     );
-    assert!(recorder.votes.is_empty());
+    assert_eq!(recorder.votes, [] as [i32; 0]);
 }
 
 #[test]
@@ -418,7 +439,7 @@ fn capacity_above_threshold_releases_control_and_stops_voting() {
         normal_params(),
         91,
     );
-    assert!(released.votes.is_empty());
+    assert_eq!(released.votes, [] as [i32; 0]);
     assert_eq!(released.releases, 1);
 
     let released_again = tick_with_capacity(
@@ -429,7 +450,7 @@ fn capacity_above_threshold_releases_control_and_stops_voting() {
         normal_params(),
         91,
     );
-    assert!(released_again.votes.is_empty());
+    assert_eq!(released_again.votes, [] as [i32; 0]);
     assert_eq!(released_again.releases, 0);
 }
 
@@ -476,7 +497,7 @@ fn released_control_is_not_resumed_within_the_same_session() {
         normal_params(),
         80,
     );
-    assert!(dropped.votes.is_empty());
+    assert_eq!(dropped.votes, [] as [i32; 0]);
     assert_eq!(dropped.releases, 0);
 }
 
@@ -497,7 +518,7 @@ fn a_new_charging_session_takes_control_again_after_release() {
         .releases,
         1
     );
-    assert!(
+    assert_eq!(
         tick_with_capacity(
             &mut looper,
             &config,
@@ -506,8 +527,8 @@ fn a_new_charging_session_takes_control_again_after_release() {
             normal_params(),
             91,
         )
-        .votes
-        .is_empty()
+        .votes,
+        [] as [i32; 0]
     );
 
     let resumed = tick_with_capacity(
