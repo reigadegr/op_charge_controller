@@ -5,3 +5,6 @@ constant_voltage_mv = 4500
 charge_cutoff_mv = 4570
 ufcs_release_capacity = 90
 shell_back_emul_temp_enabled = true
+# 开始降流的电池温度，取值为温度节点的原始值（441 表示 44.1℃）。
+# 每超出 1（0.1℃）就在最终电流上减去 100mA。
+temp_taper_start = 440

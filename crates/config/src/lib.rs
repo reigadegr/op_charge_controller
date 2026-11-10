@@ -21,6 +21,9 @@ pub struct Config {
     pub ufcs_release_capacity: u8,
     #[serde(default = "default_true")]
     pub shell_back_emul_temp_enabled: bool,
+    /// 开始降流的电池温度，单位为温度节点的原始值（441 表示 44.1℃）。
+    #[serde(default = "default_temp_taper_start")]
+    pub temp_taper_start: i32,
 }
 
 const fn default_release_capacity() -> u8 {
@@ -29,6 +32,10 @@ const fn default_release_capacity() -> u8 {
 
 const fn default_true() -> bool {
     true
+}
+
+const fn default_temp_taper_start() -> i32 {
+    440
 }
 
 impl Config {

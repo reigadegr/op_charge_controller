@@ -5,6 +5,8 @@ use scheduler::looper::{BatterySample, Looper, UfcsVoter};
 use utils::BccParams;
 
 const UFCS_CHARGE_TYPE: u32 = 15;
+/// 低于阈值 440 的常温，供不关心温度的既有用例使用。
+const NORMAL_TEMP: i32 = 430;
 
 const fn config() -> Config {
     Config {
@@ -15,6 +17,7 @@ const fn config() -> Config {
         charge_cutoff_mv: 4570,
         ufcs_release_capacity: 90,
         shell_back_emul_temp_enabled: true,
+        temp_taper_start: 440,
     }
 }
 
@@ -102,6 +105,7 @@ fn fail_next_vote(looper: &mut Looper, config: &Config) {
             Ok(BatterySample {
                 params: normal_params(),
                 capacity: 65,
+                temp: NORMAL_TEMP,
             })
         },
         || Ok(UFCS_CHARGE_TYPE),
@@ -119,6 +123,35 @@ fn tick_with_capacity(
     p: BccParams,
     capacity: u8,
 ) -> TickResult {
+    tick_with_sample(
+        looper,
+        config,
+        charging,
+        charge_type,
+        p,
+        capacity,
+        NORMAL_TEMP,
+    )
+}
+
+fn tick_charging_with_temp(
+    looper: &mut Looper,
+    config: &Config,
+    p: BccParams,
+    temp: i32,
+) -> Vec<i32> {
+    tick_with_sample(looper, config, true, UFCS_CHARGE_TYPE, p, 65, temp).votes
+}
+
+fn tick_with_sample(
+    looper: &mut Looper,
+    config: &Config,
+    charging: bool,
+    charge_type: u32,
+    p: BccParams,
+    capacity: u8,
+    temp: i32,
+) -> TickResult {
     let mut recorder = Recorder::default();
     let mut resets = 0;
     let previous_charging = looper.handle_battery_display(charging, || {
@@ -131,6 +164,7 @@ fn tick_with_capacity(
             Ok(BatterySample {
                 params: p,
                 capacity,
+                temp,
             })
         },
         || Ok(charge_type),
@@ -360,6 +394,7 @@ fn charge_type_read_failure_skips_control() {
             Ok(BatterySample {
                 params: normal_params(),
                 capacity: 65,
+                temp: NORMAL_TEMP,
             })
         },
         || Err(io::Error::new(io::ErrorKind::InvalidData, "读取失败")),
@@ -540,6 +575,7 @@ fn count_charge_type_reads(values: &[u32], previous_charging: Option<bool>) -> u
             Ok(BatterySample {
                 params: normal_params(),
                 capacity: 65,
+                temp: NORMAL_TEMP,
             })
         },
         || {
@@ -572,4 +608,65 @@ fn non_ufcs_charge_type_is_reread_at_most_three_times() {
 fn non_ufcs_charge_type_is_not_retried_after_charging_is_established() {
     assert_eq!(count_charge_type_reads(&[0], Some(true)), 1);
     assert_eq!(count_charge_type_reads(&[14], Some(true)), 1);
+}
+
+#[test]
+fn temperature_derate_subtracts_100ma_per_step_from_the_final_vote() {
+    let config = Config {
+        ufcs_max_vote: 6500,
+        ufcs_ramp_step_ma: 6500,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 430),
+        [6500]
+    );
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 454),
+        [5100]
+    );
+}
+
+#[test]
+fn temperature_derate_is_recomputed_every_round_and_restores_original_current() {
+    let config = Config {
+        ufcs_max_vote: 1000,
+        ufcs_ramp_step_ma: 1000,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 440),
+        [1000]
+    );
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 441),
+        [900]
+    );
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 442),
+        [800]
+    );
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 440),
+        [1000]
+    );
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 430),
+        Vec::<i32>::new()
+    );
+}
+
+#[test]
+fn the_first_vote_of_a_session_is_also_derated() {
+    let config = Config {
+        ufcs_ramp_step_ma: 300,
+        ..config()
+    };
+    let mut looper = Looper::new();
+    assert_eq!(
+        tick_charging_with_temp(&mut looper, &config, normal_params(), 441),
+        [200]
+    );
 }

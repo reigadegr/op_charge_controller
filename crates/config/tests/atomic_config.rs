@@ -78,6 +78,26 @@ fn shell_back_emul_temp_is_enabled_by_default_and_can_be_disabled() -> anyhow::R
 }
 
 #[test]
+fn temp_taper_start_defaults_to_440_and_follows_reload() -> anyhow::Result<()> {
+    let path = profile_path("temp_taper_start");
+    let _ = fs::remove_file(&path);
+
+    write_profile(&path, &valid_profile(6200))?;
+    let config = AtomicConfig::from_path(path.to_string_lossy())?;
+    assert_eq!(config.get().temp_taper_start, 440);
+
+    let mut explicit = valid_profile(6200);
+    explicit.push_str("temp_taper_start=430\n");
+    write_profile(&path, &explicit)?;
+    config.reload();
+    assert_eq!(config.get().temp_taper_start, 430);
+
+    fs::remove_file(&path)?;
+
+    Ok(())
+}
+
+#[test]
 fn invalid_profiles_are_rejected_before_formatting() -> anyhow::Result<()> {
     let invalid_profiles = [
         (

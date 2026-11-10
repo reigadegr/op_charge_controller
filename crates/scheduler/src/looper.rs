@@ -5,11 +5,11 @@ use config::{AtomicConfig, Config};
 use dumpsys_rs::BoundDumpsys;
 use tracing::{error, info, warn};
 use utils::{
-    BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader, lock_val,
-    mask_val, unmask_val,
+    BatteryCapacityReader, BatteryTempReader, BccParams, BccParamsReader, ChargeTypeReader,
+    SysfsReader, lock_val, mask_val, unmask_val,
 };
 
-use crate::{ramp_up, taper};
+use crate::{ramp_up, taper, temp_taper};
 
 #[path = "battery_display.rs"]
 mod battery_display;
@@ -36,7 +36,10 @@ enum ChargePhase {
 
 #[derive(Clone, Copy)]
 struct Session {
+    /// 未做温度降额的基础投票值，用于升流与恒流状态推进。
     current_vote: i32,
+    /// 上一轮实际写入节点的电流值，含温度降额。
+    applied_vote: i32,
     ramp_step_ma: u32,
     phase: ChargePhase,
     cut_off: bool,
@@ -47,10 +50,12 @@ pub trait UfcsVoter {
     fn release(&mut self) -> Result<()>;
 }
 
-/// 一轮循环读到的电池数据：电芯参数与剩余电量。
+/// 一轮循环读到的电池数据：电芯参数、剩余电量与电池温度。
 pub struct BatterySample {
     pub params: BccParams,
     pub capacity: u8,
+    /// 温度节点的原始值（441 表示 44.1℃）。
+    pub temp: i32,
 }
 
 struct SysfsVoter;
@@ -99,6 +104,7 @@ impl Looper {
         let mut reader = BccParamsReader::new()?;
         let mut charge_type_reader = ChargeTypeReader::new()?;
         let mut capacity_reader = BatteryCapacityReader::new()?;
+        let mut temp_reader = BatteryTempReader::new()?;
         let mut status_reader = SysfsReader::new(BATTERY_STATUS_PATH, 16)?;
         let mut voter = SysfsVoter;
         loop {
@@ -113,7 +119,12 @@ impl Looper {
                         || {
                             let params = reader.read()?;
                             let capacity = capacity_reader.read()?;
-                            Ok(BatterySample { params, capacity })
+                            let temp = temp_reader.read()?;
+                            Ok(BatterySample {
+                                params,
+                                capacity,
+                                temp,
+                            })
                         },
                         || charge_type_reader.read(),
                         &mut voter,
@@ -193,35 +204,49 @@ impl Looper {
         if self.released {
             return Ok(());
         }
-        let BatterySample { params, capacity } = read_sample().context("读取电池数据失败")?;
+        let BatterySample {
+            params,
+            capacity,
+            temp,
+        } = read_sample().context("读取电池数据失败")?;
         if capacity > config.ufcs_release_capacity {
             return self.release_control(config, capacity, voter);
         }
 
-        let (mut session, first_sample) = self.start_session(config, voter)?;
-        let current = session.current_vote;
+        let (mut session, first_sample) = self.start_session(config, temp, voter)?;
         info!(
             cell_voltage_1_mv = params.cell_voltage_1_mv,
             cell_voltage_2_mv = params.cell_voltage_2_mv,
             current_ma = params.current_ma,
+            battery_temp = temp,
             "充电数据"
         );
         let over_voltage = Self::over_constant_voltage(config, &params);
         Self::update_voltage_state(&mut session, config, &params, over_voltage);
-        let next = Self::next_vote(
+        let base = Self::next_vote(
             &mut session,
             config,
             first_sample,
             params.current_ma,
             over_voltage,
         );
-        if next != current {
+        let next = temp_taper::apply(base, temp, config);
+        if next != session.applied_vote {
+            if next != base {
+                info!(
+                    battery_temp = temp,
+                    temp_taper_start = config.temp_taper_start,
+                    current_vote_ma = next,
+                    "电池温度超过阈值，已按温度降低充电电流"
+                );
+            }
             voter.apply(next)?;
-            session.current_vote = next;
+            session.applied_vote = next;
             if session.cut_off {
                 warn!("电芯电压达到截止阈值，UFCS 电流已置 0");
             }
         }
+        session.current_vote = base;
         self.session = Some(session);
 
         Ok(())
@@ -245,8 +270,9 @@ impl Looper {
     }
 
     fn start_session(
-        &mut self,
+        &self,
         config: &Config,
+        temp: i32,
         voter: &mut impl UfcsVoter,
     ) -> Result<(Session, bool)> {
         if let Some(session) = self.session {
@@ -257,14 +283,15 @@ impl Looper {
             Ok(step) => step.min(config.ufcs_max_vote),
             Err(_) => config.ufcs_max_vote,
         };
-        voter.apply(vote)?;
+        let applied_vote = temp_taper::apply(vote, temp, config);
+        voter.apply(applied_vote)?;
         let session = Session {
             current_vote: vote,
+            applied_vote,
             ramp_step_ma: step,
             phase: ChargePhase::RampUp,
             cut_off: false,
         };
-        self.session = Some(session);
         Ok((session, true))
     }
 

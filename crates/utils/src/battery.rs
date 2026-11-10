@@ -8,6 +8,8 @@ use std::{
 const BCC_PARMS_PATH: &str = "/sys/class/oplus_chg/battery/bcc_parms";
 const BATTERY_LOG_CONTENT_PATH: &str = "/sys/class/oplus_chg/battery/battery_log_content";
 const BATTERY_CAPACITY_PATH: &str = "/sys/class/power_supply/battery/capacity";
+const BATTERY_TEMP_PATH: &str =
+    "/sys/devices/platform/soc/soc:oplus,mms_gauge/oplus_mms/gauge/battery/temp";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BccParams {
@@ -151,6 +153,36 @@ fn parse_battery_capacity(content: &str) -> io::Result<u8> {
         io::Error::new(
             io::ErrorKind::InvalidData,
             format!("解析电池电量失败: {error}"),
+        )
+    })
+}
+
+#[derive(Debug)]
+pub struct BatteryTempReader {
+    reader: SysfsReader,
+}
+
+impl BatteryTempReader {
+    pub fn new() -> io::Result<Self> {
+        Self::from_path(BATTERY_TEMP_PATH)
+    }
+
+    pub fn from_path(path: impl Into<PathBuf>) -> io::Result<Self> {
+        Ok(Self {
+            reader: SysfsReader::new(path, 8)?,
+        })
+    }
+
+    pub fn read(&mut self) -> io::Result<i32> {
+        parse_battery_temp(self.reader.read()?)
+    }
+}
+
+fn parse_battery_temp(content: &str) -> io::Result<i32> {
+    content.trim().parse().map_err(|error| {
+        io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("解析电池温度失败: {error}"),
         )
     })
 }

@@ -6,7 +6,10 @@ use std::{
     process,
 };
 
-use utils::{BatteryCapacityReader, BccParams, BccParamsReader, ChargeTypeReader, SysfsReader};
+use utils::{
+    BatteryCapacityReader, BatteryTempReader, BccParams, BccParamsReader, ChargeTypeReader,
+    SysfsReader,
+};
 
 fn write_content(name: &str, content: &str) -> io::Result<PathBuf> {
     let path = env::temp_dir().join(format!(
@@ -85,6 +88,31 @@ fn parses_battery_capacity() -> io::Result<()> {
     }
 
     Ok(())
+}
+
+#[test]
+fn parses_battery_temp() -> io::Result<()> {
+    for (name, content, expected) in [
+        ("temp_441", "441\n", 441),
+        ("temp_padded", " 440 ", 440),
+        ("temp_negative", "-15\n", -15),
+    ] {
+        let path = write_content(name, content)?;
+        assert_eq!(BatteryTempReader::from_path(&path)?.read()?, expected);
+        fs::remove_file(&path)?;
+    }
+
+    Ok(())
+}
+
+#[test]
+fn rejects_invalid_battery_temp() -> io::Result<()> {
+    let path = write_content("temp_invalid", "abc")?;
+    assert!(matches!(
+        BatteryTempReader::from_path(&path)?.read(),
+        Err(error) if error.kind() == ErrorKind::InvalidData
+    ));
+    fs::remove_file(&path)
 }
 
 #[test]
